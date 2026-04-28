@@ -5,6 +5,8 @@ export type OutboundMessage = {
   body: string;
   channel: MessagingChannel;
   templateName?: string;
+  /** e.g. en_US — defaults from WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE */
+  templateLanguageCode?: string;
   templateVariables?: Record<string, string>;
 };
 

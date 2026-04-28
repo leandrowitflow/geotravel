@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { isStaleSessionAuthError } from "@/lib/supabase/auth-errors";
 
 type Props = { defaultNext: string };
 
@@ -18,22 +19,34 @@ export function SignInForm({ defaultNext }: Props) {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const supabase = createClient();
-    if (!supabase) {
-      setError("Supabase is not configured.");
-      return;
+    try {
+      const supabase = createClient();
+      if (!supabase) {
+        setError("Supabase is not configured.");
+        return;
+      }
+      // Drop stale cookies so we do not hit "Invalid Refresh Token" before password sign-in.
+      await supabase.auth.signOut({ scope: "local" });
+      const { error: signError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signError) {
+        if (isStaleSessionAuthError(signError)) {
+          await supabase.auth.signOut({ scope: "local" });
+          setError(
+            "Old session cookies were cleared — click Sign in again.",
+          );
+          return;
+        }
+        setError(signError.message);
+        return;
+      }
+      router.push(defaultNext);
+      router.refresh();
+    } finally {
+      setLoading(false);
     }
-    const { error: signError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    setLoading(false);
-    if (signError) {
-      setError(signError.message);
-      return;
-    }
-    router.push(defaultNext);
-    router.refresh();
   }
 
   return (
