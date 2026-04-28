@@ -9,13 +9,15 @@ export const metadata: Metadata = {
 export default function TermsPage() {
   const contact = legalContactEmail();
   return (
-    <article className="prose prose-stone max-w-none prose-headings:scroll-mt-20">
-      <h1 className="text-2xl font-semibold text-stone-900">
+    <article className="max-w-none space-y-4 text-stone-800 dark:text-stone-300 [&_h1]:scroll-mt-20 [&_h2]:mt-8 [&_h2]:scroll-mt-20 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-stone-900 [&_h2]:dark:text-stone-50 [&_h3]:mt-6 [&_h3]:scroll-mt-20 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-stone-900 [&_h3]:dark:text-stone-50 [&_hr]:my-8 [&_hr]:border-stone-200 [&_hr]:dark:border-stone-700 [&_a]:text-teal-800 [&_a]:underline [&_a]:dark:text-teal-300 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+      <h1 className="text-2xl font-semibold text-stone-900 dark:text-stone-50">
         Terms of Service / Termos de utilização
       </h1>
-      <p className="text-sm text-stone-500">Última atualização / Last updated: 28 April 2026</p>
+      <p className="text-sm text-stone-500 dark:text-stone-400">
+        Última atualização / Last updated: 28 April 2026
+      </p>
 
-      <hr className="my-8 border-stone-200" />
+      <hr className="my-8 border-stone-200 dark:border-stone-700" />
 
       <h2 className="text-xl font-semibold">English</h2>
       <p>

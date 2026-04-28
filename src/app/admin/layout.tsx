@@ -11,8 +11,8 @@ export default async function AdminLayout({
 }) {
   const user = await requireStaff();
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-stone-200 bg-[#0f3d3a] text-white">
+    <div className="min-h-screen flex flex-col bg-stone-50 dark:bg-stone-950">
+      <header className="border-b border-stone-200 bg-[#0f3d3a] text-white dark:border-stone-800">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
           <div className="flex items-center gap-6">
             <Link href="/admin/cases" className="font-semibold tracking-tight">
