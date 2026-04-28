@@ -37,6 +37,26 @@ export default async function Home() {
             </Link>
           )}
         </div>
+        <footer className="mt-auto border-t border-teal-800/40 pt-10 text-sm text-teal-200/80">
+          <p className="mb-2">Legal</p>
+          <ul className="flex flex-wrap gap-x-6 gap-y-2">
+            <li>
+              <Link href="/legal/terms" className="underline hover:text-white">
+                Terms of Service
+              </Link>
+            </li>
+            <li>
+              <Link href="/legal/privacy" className="underline hover:text-white">
+                Privacy Policy
+              </Link>
+            </li>
+            <li>
+              <Link href="/legal/data-deletion" className="underline hover:text-white">
+                User data deletion
+              </Link>
+            </li>
+          </ul>
+        </footer>
       </div>
     </div>
   );
