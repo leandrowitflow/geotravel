@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isStaleSessionAuthError } from "./auth-errors";
 import { getSupabaseAnonKey, getSupabaseUrl } from "./env";
 
 export async function updateSession(request: NextRequest) {
@@ -35,8 +36,12 @@ export async function updateSession(request: NextRequest) {
 
   let user = null;
   try {
-    const { data } = await supabase.auth.getUser();
-    user = data.user;
+    const { data, error } = await supabase.auth.getUser();
+    if (error && isStaleSessionAuthError(error)) {
+      await supabase.auth.signOut();
+    } else {
+      user = data.user;
+    }
   } catch {
     // Supabase unreachable — fail open in middleware, let page-level auth handle it.
     return supabaseResponse;

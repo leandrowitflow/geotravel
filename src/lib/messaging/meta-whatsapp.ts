@@ -1,6 +1,17 @@
 import type { OutboundMessage, SendResult } from "./types";
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+function graphBaseUrl(): string {
+  const ver =
+    process.env.WHATSAPP_GRAPH_API_VERSION?.trim().replace(/^v?/, "v") ||
+    "v25.0";
+  return `https://graph.facebook.com/${ver}`;
+}
+
+function defaultTemplateLanguage(): string {
+  return (
+    process.env.WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE?.trim() || "en_US"
+  );
+}
 
 export async function sendWhatsAppMessage(
   msg: OutboundMessage,
@@ -11,33 +22,43 @@ export async function sendWhatsAppMessage(
     return { ok: false, error: "whatsapp_not_configured" };
   }
   const to = msg.toE164.replace(/^\+/, "");
-  const url = `${GRAPH}/${phoneId}/messages`;
-  const body =
-    msg.templateName && msg.templateVariables
-      ? {
-          messaging_product: "whatsapp",
-          to,
-          type: "template",
-          template: {
-            name: msg.templateName,
-            language: { code: "en" },
-            components: [
-              {
-                type: "body",
-                parameters: Object.values(msg.templateVariables).map((text) => ({
-                  type: "text",
-                  text,
-                })),
-              },
-            ],
-          },
-        }
-      : {
-          messaging_product: "whatsapp",
-          to,
-          type: "text",
-          text: { body: msg.body },
-        };
+  const url = `${graphBaseUrl()}/${phoneId}/messages`;
+  const lang =
+    msg.templateLanguageCode?.trim() || defaultTemplateLanguage();
+
+  const vars = msg.templateVariables;
+  const hasVars = vars && Object.keys(vars).length > 0;
+
+  const body = msg.templateName
+    ? {
+        messaging_product: "whatsapp",
+        to,
+        type: "template" as const,
+        template: hasVars
+          ? {
+              name: msg.templateName,
+              language: { code: lang },
+              components: [
+                {
+                  type: "body" as const,
+                  parameters: Object.values(vars!).map((text) => ({
+                    type: "text" as const,
+                    text,
+                  })),
+                },
+              ],
+            }
+          : {
+              name: msg.templateName,
+              language: { code: lang },
+            },
+      }
+    : {
+        messaging_product: "whatsapp",
+        to,
+        type: "text" as const,
+        text: { body: msg.body },
+      };
 
   const res = await fetch(url, {
     method: "POST",
