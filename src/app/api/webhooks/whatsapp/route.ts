@@ -27,10 +27,53 @@ function verifyMetaSignature(rawBody: string, signature: string | null): boolean
   }
 }
 
+/** First user-originated text message in the webhook (Meta can send multiple changes / non-text first). */
+function extractFirstInboundUserText(payload: unknown): {
+  fromE164: string;
+  body: string;
+  providerMessageId?: string;
+} | null {
+  const p = payload as {
+    entry?: Array<{
+      changes?: Array<{
+        value?: {
+          messages?: Array<{
+            from?: string | number;
+            id?: string;
+            type?: string;
+            text?: { body?: string };
+          }>;
+        };
+      }>;
+    }>;
+  };
+  for (const entry of p.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      for (const m of change.value?.messages ?? []) {
+        const fromRaw =
+          m.from != null && m.from !== "" ? String(m.from).trim() : "";
+        const body = m.text?.body?.trim();
+        if (!fromRaw || !body) continue;
+        if (m.type && m.type !== "text") continue;
+        const digits = fromRaw.replace(/\D/g, "");
+        if (digits.length < 8) continue;
+        const fromE164 = `+${digits}`;
+        return {
+          fromE164,
+          body,
+          providerMessageId: m.id ? String(m.id) : undefined,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   const raw = await req.text();
   const sig = req.headers.get("x-hub-signature-256");
   if (process.env.WHATSAPP_APP_SECRET && !verifyMetaSignature(raw, sig)) {
+    console.warn("[whatsapp webhook] invalid_signature (check WHATSAPP_APP_SECRET matches Meta app)");
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
   let payload: unknown;
@@ -39,25 +82,28 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const p = payload as {
-    entry?: {
-      changes?: {
-        value?: {
-          messages?: { from?: string; id?: string; text?: { body?: string } }[];
-        };
-      }[];
-    }[];
-  };
-  const msg = p.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  if (!msg?.from || !msg.text?.body) {
+
+  const inbound = extractFirstInboundUserText(payload);
+  if (!inbound) {
     return NextResponse.json({ ok: true });
   }
-  const from = msg.from.startsWith("+") ? msg.from : `+${msg.from}`;
-  await processInboundMessaging({
-    channel: "whatsapp",
-    fromE164: from,
-    body: msg.text.body,
-    providerMessageId: msg.id,
-  });
+
+  try {
+    const result = await processInboundMessaging({
+      channel: "whatsapp",
+      fromE164: inbound.fromE164,
+      body: inbound.body,
+      providerMessageId: inbound.providerMessageId,
+    });
+    if (!result.ok) {
+      console.warn("[whatsapp webhook] inbound not stored:", result.error, {
+        fromE164: inbound.fromE164,
+      });
+    }
+  } catch (e) {
+    console.error("[whatsapp webhook] processInboundMessaging failed:", e);
+    return NextResponse.json({ error: "processing_failed" }, { status: 500 });
+  }
+
   return NextResponse.json({ ok: true });
 }
