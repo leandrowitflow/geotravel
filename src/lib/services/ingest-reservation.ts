@@ -78,13 +78,14 @@ export async function ingestReservationEvent(
     );
     const reservationPk = String(ins.id);
 
+    const preferredLang = (r.source_language_hint || "en").toLowerCase().slice(0, 8) || "en";
     assertNoError(
       "insert contact",
       await sb.from("contacts").insert({
         reservation_id: reservationPk,
         phone: normalizePhone(r.source_phone),
         email: r.source_email?.trim() || null,
-        preferred_language: "en",
+        preferred_language: preferredLang,
       }),
     );
 

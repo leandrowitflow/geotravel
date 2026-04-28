@@ -6,27 +6,67 @@ import { useState } from "react";
 export function CaseActions({ caseId }: { caseId: string }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{
+    tone: "ok" | "err";
+    text: string;
+    hint?: string;
+  } | null>(null);
 
   async function run(action: string) {
     setPending(action);
+    setNotice(null);
     try {
       const res = await fetch(`/api/admin/cases/${caseId}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        hint?: string;
+      };
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        alert(j.error ?? "Action failed");
-      } else {
-        router.refresh();
+        setNotice({
+          tone: "err",
+          text: j.error ?? "Action failed",
+          hint: typeof j.hint === "string" ? j.hint : undefined,
+        });
+        return;
       }
+      setNotice({
+        tone: "ok",
+        text:
+          action === "resend"
+            ? "Reminder sent."
+            : action === "force_sms"
+              ? "Channel set to SMS."
+              : "Saved.",
+      });
+      router.refresh();
     } finally {
       setPending(null);
     }
   }
 
   return (
+    <div className="space-y-2">
+      {notice && (
+        <p
+          className={
+            notice.tone === "ok"
+              ? "text-sm text-emerald-700 dark:text-emerald-300"
+              : "text-sm text-red-700 dark:text-red-300"
+          }
+          role="status"
+        >
+          {notice.text}
+          {notice.hint && (
+            <span className="mt-1 block text-xs text-stone-600 dark:text-stone-400">
+              {notice.hint}
+            </span>
+          )}
+        </p>
+      )}
     <div className="flex flex-wrap gap-2">
       <button
         type="button"
@@ -68,6 +108,7 @@ export function CaseActions({ caseId }: { caseId: string }) {
       >
         {pending === "close_case" ? "…" : "Close case"}
       </button>
+    </div>
     </div>
   );
 }

@@ -162,19 +162,31 @@ export async function POST(
         toE164: to,
         body,
       });
-      if (send.ok) {
-        assertNoError(
-          "admin resend message",
-          await sb.from("messages").insert({
-            case_id: caseId,
-            direction: "outbound",
-            channel: send.channel,
-            body,
-            provider_message_id: send.providerMessageId,
-            status: "sent",
-          }),
+      if (!send.ok) {
+        return NextResponse.json(
+          {
+            error: send.error,
+            hint:
+              send.error === "whatsapp_not_configured"
+                ? "Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env.local."
+                : row.currentChannel === "whatsapp"
+                  ? "WhatsApp often rejects free-form text outside the 24h customer window; use a template or have the customer message you first."
+                  : undefined,
+          },
+          { status: 502 },
         );
       }
+      assertNoError(
+        "admin resend message",
+        await sb.from("messages").insert({
+          case_id: caseId,
+          direction: "outbound",
+          channel: send.channel,
+          body,
+          provider_message_id: send.providerMessageId,
+          status: "sent",
+        }),
+      );
       break;
     }
     default:

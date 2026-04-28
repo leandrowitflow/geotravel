@@ -61,6 +61,64 @@ export type GeotravelBookingsResult =
     }
   | { ok: false; error: string };
 
+/** PT demo mobile +351 966 915 976 — search digits: 351966915976 */
+const MOCK_PHONE_351 = "+351966915976";
+
+function buildMockBookings351966915976(): GeotravelBooking[] {
+  const now = Date.now();
+  const p1 = new Date(now + 2 * 86400_000);
+  return [
+    {
+      id: 910351001,
+      status: "NEW",
+      outcome: "Active",
+      plateform: "mock",
+      booked_date: new Date().toISOString(),
+      pickup_date_time: p1.toISOString(),
+      pickup_city: "Lisbon",
+      pickup_country: "PT",
+      pickup_address: "Lisbon Airport (LIS)",
+      pickup_location_type: "airport",
+      dropoff_city: "Cascais",
+      dropoff_country: "PT",
+      dropoff_address: "Hotel mock bay",
+      dropoff_location_type: "hotel",
+      nearest_airport: "LIS",
+      vehicle_type: "Standard sedan",
+      passenger_count: 2,
+      distance_km: 35,
+      amount: 48.5,
+      invoice_country: "PT",
+      booking_reference: "MOCK-351966915976-NEW",
+      passenger_phone: MOCK_PHONE_351,
+      passenger_name: "Mock Cliente (NEW)",
+      loyalty_name: null,
+      direction: "IN",
+      trip_type: "one_way",
+      is_return: 0,
+      multidays: null,
+      book_lead_time: "2 days 4:00:00",
+      pickup_dow: p1.getUTCDay(),
+    },
+  ];
+}
+
+function mockBookingsMatchingParams(
+  params: GeotravelBookingsParams,
+): GeotravelBooking[] {
+  return buildMockBookings351966915976().filter((b) => {
+    if (params.outcome && b.outcome !== params.outcome) return false;
+    if (params.status && b.status !== params.status) return false;
+    if (
+      params.airport &&
+      (b.nearest_airport?.toUpperCase() ?? "") !== params.airport.toUpperCase()
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export async function fetchGeotravelBookings(
   params: GeotravelBookingsParams = {},
 ): Promise<GeotravelBookingsResult> {
@@ -122,9 +180,32 @@ export async function fetchGeotravelBookings(
     };
   }
 
+  const pagination = json.pagination ?? { offset: 0, limit: 0, total: 0 };
+  let data = json.data ?? [];
+  const useMock =
+    process.env.GEOTRAVEL_MOCK_BOOKINGS === "1" ||
+    process.env.GEOTRAVEL_MOCK_BOOKINGS === "true";
+
+  if (useMock) {
+    const offset = params.offset ?? 0;
+    const limit = params.limit ?? 100;
+    const mocks = mockBookingsMatchingParams(params);
+    if (offset === 0) {
+      data = [...mocks, ...data].slice(0, limit);
+    }
+    return {
+      ok: true,
+      data,
+      pagination: {
+        ...pagination,
+        total: pagination.total + mocks.length,
+      },
+    };
+  }
+
   return {
     ok: true,
-    data: json.data ?? [],
-    pagination: json.pagination ?? { offset: 0, limit: 0, total: 0 },
+    data,
+    pagination,
   };
 }
