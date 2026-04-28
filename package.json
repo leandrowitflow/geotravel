@@ -12,6 +12,7 @@
     "whitelabel:smoke": "tsx scripts/whitelabel-smoke.ts",
     "tg4travel:smoke": "tsx scripts/tg4travel-smoke.ts",
     "whatsapp:smoke": "tsx scripts/whatsapp-smoke.ts",
+    "geotravel:survey-status": "tsx scripts/geotravel-survey-status.ts",
     "test": "vitest run"
   },
   "dependencies": {
