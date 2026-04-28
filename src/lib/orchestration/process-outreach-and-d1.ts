@@ -8,6 +8,7 @@ import {
   isQuietHourNow,
   maxOutboundAttempts,
 } from "@/lib/scheduling/quiet-hours";
+import { buildInitialOutreachMessage } from "./outreach-first-message";
 import { assertTransition, type OrchestrationState } from "./state-machine";
 
 function normalizeToE164(phone: string | null | undefined): string | null {
@@ -60,11 +61,21 @@ export async function processOutreachQueue(): Promise<{ processed: number }> {
     );
     const rRaw = resvRows[0];
     if (!rRaw) continue;
+    const pickupDt = rRaw.pickup_datetime;
+    const pickupDatetimeIso =
+      typeof pickupDt === "string"
+        ? pickupDt
+        : pickupDt instanceof Date
+          ? pickupDt.toISOString()
+          : null;
     const r = {
       id: String(rRaw.id),
       customerName: (rRaw.customer_name as string) ?? null,
       externalBookingId: String(rRaw.external_booking_id),
       sourcePhone: (rRaw.source_phone as string) ?? null,
+      pickupLocation: (rRaw.pickup_location as string) ?? null,
+      dropoffLocation: (rRaw.dropoff_location as string) ?? null,
+      pickupDatetimeIso,
     };
     const contRows = takeRows<Record<string, unknown>>(
       "contact for outreach",
@@ -93,8 +104,14 @@ export async function processOutreachQueue(): Promise<{ processed: number }> {
       );
       continue;
     }
-    const name = r.customerName ?? "there";
-    const body = `Hi ${name}, this is Geotravel about your upcoming transfer (booking ${r.externalBookingId}). Is this the best number to reach you? Reply YES to confirm.`;
+    const body = buildInitialOutreachMessage({
+      customerName: r.customerName,
+      externalBookingId: r.externalBookingId,
+      pickupLocation: r.pickupLocation,
+      dropoffLocation: r.dropoffLocation,
+      pickupDatetimeIso: r.pickupDatetimeIso,
+      contactPreferredLanguage: (contact?.preferred_language as string) ?? undefined,
+    });
     const send = await sendViaPreferredChannel({
       caseId: c.id,
       reservationId: r.id,
