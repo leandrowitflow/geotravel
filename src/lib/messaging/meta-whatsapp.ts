@@ -13,6 +13,20 @@ function defaultTemplateLanguage(): string {
   );
 }
 
+/** Meta: same-user throughput (e.g. 131056) — backoff 4^attempt seconds per platform guidance. */
+function isWhatsAppRateOrThroughputError(
+  status: number,
+  code: number | undefined,
+): boolean {
+  if (status === 429) return true;
+  if (code === 131056) return true;
+  return false;
+}
+
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 export async function sendWhatsAppMessage(
   msg: OutboundMessage,
 ): Promise<SendResult> {
@@ -32,6 +46,7 @@ export async function sendWhatsAppMessage(
   const body = msg.templateName
     ? {
         messaging_product: "whatsapp",
+        recipient_type: "individual",
         to,
         type: "template" as const,
         template: hasVars
@@ -55,32 +70,54 @@ export async function sendWhatsAppMessage(
       }
     : {
         messaging_product: "whatsapp",
+        recipient_type: "individual",
         to,
         type: "text" as const,
-        text: { body: msg.body },
+        text: {
+          preview_url: Boolean(msg.linkPreview),
+          body: msg.body,
+        },
       };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const json = (await res.json()) as {
-    messages?: { id: string }[];
-    error?: { message: string };
-  };
-  if (!res.ok) {
-    return {
-      ok: false,
-      error: json.error?.message ?? `whatsapp_http_${res.status}`,
+  const maxAttempts = 4;
+  let lastErr = "whatsapp_unknown_error";
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json()) as {
+      messages?: { id: string }[];
+      error?: { message: string; code?: number };
     };
+
+    if (res.ok) {
+      const id = json.messages?.[0]?.id;
+      if (!id) {
+        return { ok: false, error: "whatsapp_no_message_id" };
+      }
+      return { ok: true, providerMessageId: id, channel: "whatsapp" };
+    }
+
+    const code = json.error?.code;
+    const msgText = json.error?.message ?? `whatsapp_http_${res.status}`;
+    lastErr = msgText;
+
+    if (
+      isWhatsAppRateOrThroughputError(res.status, code) &&
+      attempt < maxAttempts - 1
+    ) {
+      await sleep(Math.pow(4, attempt) * 1000);
+      continue;
+    }
+
+    return { ok: false, error: msgText };
   }
-  const id = json.messages?.[0]?.id;
-  if (!id) {
-    return { ok: false, error: "whatsapp_no_message_id" };
-  }
-  return { ok: true, providerMessageId: id, channel: "whatsapp" };
+
+  return { ok: false, error: lastErr };
 }

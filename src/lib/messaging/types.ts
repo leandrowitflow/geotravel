@@ -8,6 +8,8 @@ export type OutboundMessage = {
   /** e.g. en_US — defaults from WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE */
   templateLanguageCode?: string;
   templateVariables?: Record<string, string>;
+  /** When true, WhatsApp may show link previews in the text bubble (Cloud API). */
+  linkPreview?: boolean;
 };
 
 export type SendResult =

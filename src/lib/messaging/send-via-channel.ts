@@ -11,6 +11,7 @@ export async function sendViaPreferredChannel(input: {
   body: string;
   templateName?: string;
   templateVariables?: Record<string, string>;
+  linkPreview?: boolean;
 }): Promise<SendResult> {
   const base: OutboundMessage = {
     toE164: input.toE164,
@@ -18,6 +19,7 @@ export async function sendViaPreferredChannel(input: {
     channel: input.preferred,
     templateName: input.templateName,
     templateVariables: input.templateVariables,
+    linkPreview: input.linkPreview,
   };
   let result: SendResult =
     input.preferred === "whatsapp"
