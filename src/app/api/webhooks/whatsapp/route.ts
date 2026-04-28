@@ -27,7 +27,58 @@ function verifyMetaSignature(rawBody: string, signature: string | null): boolean
   }
 }
 
-/** First user-originated text message in the webhook (Meta can send multiple changes / non-text first). */
+type RawInboundMsg = {
+  from?: string | number;
+  id?: string;
+  type?: string;
+  text?: { body?: string };
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string };
+  };
+};
+
+function inboundBodyFromMessage(m: RawInboundMsg): string | null {
+  const fromText = m.text?.body?.trim();
+  if (fromText) return fromText;
+  const ir = m.interactive;
+  if (!ir) return null;
+  const btn = ir.button_reply?.title?.trim();
+  if (btn) return btn;
+  const list = ir.list_reply?.title?.trim();
+  if (list) return list;
+  return null;
+}
+
+/** Log when Meta sent messages we did not map to text (helps debug missing timeline rows). */
+function logUnparsedWhatsAppMessages(payload: unknown) {
+  const p = payload as { object?: string; entry?: Array<{ changes?: unknown[] }> };
+  if (p.object !== "whatsapp_business_account") return;
+  const types: string[] = [];
+  try {
+    for (const entry of p.entry ?? []) {
+      for (const ch of (entry.changes ?? []) as Array<{
+        field?: string;
+        value?: { messages?: RawInboundMsg[] };
+      }>) {
+        for (const m of ch.value?.messages ?? []) {
+          types.push(String(m.type ?? "?"));
+        }
+      }
+    }
+    if (types.length > 0) {
+      console.info(
+        "[whatsapp webhook] ignored or unparsed message type(s):",
+        types.join(", "),
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** First user-originated text (or interactive reply title) in the webhook. */
 function extractFirstInboundUserText(payload: unknown): {
   fromE164: string;
   body: string;
@@ -37,12 +88,7 @@ function extractFirstInboundUserText(payload: unknown): {
     entry?: Array<{
       changes?: Array<{
         value?: {
-          messages?: Array<{
-            from?: string | number;
-            id?: string;
-            type?: string;
-            text?: { body?: string };
-          }>;
+          messages?: RawInboundMsg[];
         };
       }>;
     }>;
@@ -52,9 +98,8 @@ function extractFirstInboundUserText(payload: unknown): {
       for (const m of change.value?.messages ?? []) {
         const fromRaw =
           m.from != null && m.from !== "" ? String(m.from).trim() : "";
-        const body = m.text?.body?.trim();
+        const body = inboundBodyFromMessage(m);
         if (!fromRaw || !body) continue;
-        if (m.type && m.type !== "text") continue;
         const digits = fromRaw.replace(/\D/g, "");
         if (digits.length < 8) continue;
         const fromE164 = `+${digits}`;
@@ -85,6 +130,7 @@ export async function POST(req: Request) {
 
   const inbound = extractFirstInboundUserText(payload);
   if (!inbound) {
+    logUnparsedWhatsAppMessages(payload);
     return NextResponse.json({ ok: true });
   }
 
