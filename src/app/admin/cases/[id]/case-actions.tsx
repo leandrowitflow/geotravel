@@ -40,7 +40,7 @@ export function CaseActions({ caseId }: { caseId: string }) {
         type="button"
         disabled={pending !== null}
         onClick={() => run("force_sms")}
-        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50"
+        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700"
       >
         {pending === "force_sms" ? "…" : "Force SMS"}
       </button>
@@ -48,7 +48,7 @@ export function CaseActions({ caseId }: { caseId: string }) {
         type="button"
         disabled={pending !== null}
         onClick={() => run("retry_crm")}
-        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50"
+        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700"
       >
         {pending === "retry_crm" ? "…" : "Retry CRM write"}
       </button>
@@ -56,7 +56,7 @@ export function CaseActions({ caseId }: { caseId: string }) {
         type="button"
         disabled={pending !== null}
         onClick={() => run("needs_human")}
-        className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+        className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100 dark:hover:bg-amber-900/40"
       >
         {pending === "needs_human" ? "…" : "Mark needs human"}
       </button>
@@ -64,7 +64,7 @@ export function CaseActions({ caseId }: { caseId: string }) {
         type="button"
         disabled={pending !== null}
         onClick={() => run("close_case")}
-        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50"
+        className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700"
       >
         {pending === "close_case" ? "…" : "Close case"}
       </button>

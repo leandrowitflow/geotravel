@@ -15,12 +15,12 @@ function Badge({
 }) {
   const cls =
     tone === "ok"
-      ? "bg-emerald-100 text-emerald-800"
+      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-100"
       : tone === "warn"
-        ? "bg-amber-100 text-amber-800"
+        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-100"
         : tone === "bad"
-          ? "bg-red-100 text-red-800"
-          : "bg-stone-100 text-stone-700";
+          ? "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-100"
+          : "bg-stone-100 text-stone-700 dark:bg-stone-700 dark:text-stone-100";
   return (
     <span
       className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${cls}`}
@@ -60,17 +60,17 @@ function StatCard({
 }) {
   const color =
     tone === "ok"
-      ? "text-emerald-700"
+      ? "text-emerald-700 dark:text-emerald-300"
       : tone === "warn"
-        ? "text-amber-600"
+        ? "text-amber-600 dark:text-amber-300"
         : tone === "bad"
-          ? "text-red-600"
-          : "text-stone-800";
+          ? "text-red-600 dark:text-red-400"
+          : "text-stone-800 dark:text-stone-100";
   return (
-    <div className="rounded-lg border border-stone-200 bg-white px-4 py-3 shadow-sm">
-      <p className="text-xs text-stone-500">{label}</p>
+    <div className="rounded-lg border border-stone-200 bg-white px-4 py-3 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
+      <p className="text-xs text-stone-500 dark:text-stone-400">{label}</p>
       <p className={`text-2xl font-bold ${color}`}>{value}</p>
-      {sub && <p className="text-xs text-stone-400">{sub}</p>}
+      {sub && <p className="text-xs text-stone-400 dark:text-stone-500">{sub}</p>}
     </div>
   );
 }
@@ -102,14 +102,19 @@ export default async function BookingsPage({
 
   if (!result.ok) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">
+      <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
         <p className="font-semibold">Failed to load bookings</p>
         <p className="mt-1 font-mono text-xs">{result.error}</p>
-        <p className="mt-3 text-stone-500">
+        <p className="mt-3 text-stone-500 dark:text-stone-400">
           Check that{" "}
-          <code className="rounded bg-stone-100 px-1">GEOTRAVEL_API_KEY</code>{" "}
+          <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
+            GEOTRAVEL_API_KEY
+          </code>{" "}
           is set in{" "}
-          <code className="rounded bg-stone-100 px-1">.env.local</code>.
+          <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
+            .env.local
+          </code>
+          .
         </p>
       </div>
     );
@@ -132,16 +137,16 @@ export default async function BookingsPage({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-stone-900">Bookings</h1>
-          <p className="text-sm text-stone-500">
+          <h1 className="text-2xl font-semibold text-stone-900 dark:text-stone-50">Bookings</h1>
+          <p className="text-sm text-stone-500 dark:text-stone-400">
             Live data from Geotravel API —{" "}
-            <span className="font-medium text-stone-700">
+            <span className="font-medium text-stone-700 dark:text-stone-200">
               {total.toLocaleString()}
             </span>{" "}
             total bookings
           </p>
         </div>
-        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">
+        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
           Live
         </span>
       </div>
@@ -161,8 +166,8 @@ export default async function BookingsPage({
               (f.params.replace("?outcome=", "") === "All"
                 ? ""
                 : f.params.replace("?outcome=", ""))
-                ? "border-teal-600 bg-teal-50 text-teal-700"
-                : "border-stone-200 bg-white text-stone-600 hover:border-stone-300"
+                ? "border-teal-600 bg-teal-50 text-teal-700 dark:border-teal-500 dark:bg-teal-950 dark:text-teal-200"
+                : "border-stone-200 bg-white text-stone-600 hover:border-stone-300 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300 dark:hover:border-stone-500"
             }`}
           >
             {f.label}
@@ -184,9 +189,9 @@ export default async function BookingsPage({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-stone-200 bg-stone-50 text-xs text-stone-600">
+          <thead className="border-b border-stone-200 bg-stone-50 text-xs text-stone-600 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300">
             <tr>
               <th className="px-3 py-2 font-semibold">Ref</th>
               <th className="px-3 py-2 font-semibold">Customer</th>
@@ -201,12 +206,15 @@ export default async function BookingsPage({
               <th className="px-3 py-2 font-semibold">Lead time</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-stone-100">
+          <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
             {bookings.map((b: GeotravelBooking) => (
-              <tr key={b.id} className="hover:bg-stone-50/60">
+              <tr
+                key={b.id}
+                className="hover:bg-stone-50/60 dark:hover:bg-stone-800/50"
+              >
                 {/* Ref */}
                 <td className="px-3 py-2">
-                  <div className="font-mono text-xs font-medium text-stone-800">
+                  <div className="font-mono text-xs font-medium text-stone-800 dark:text-stone-100">
                     {b.booking_reference ?? b.id}
                   </div>
                   {b.loyalty_name && (
@@ -221,14 +229,14 @@ export default async function BookingsPage({
 
                 {/* Customer */}
                 <td className="px-3 py-2">
-                  <div className="font-medium text-stone-800">
+                  <div className="font-medium text-stone-800 dark:text-stone-100">
                     {b.passenger_name ?? "—"}
                   </div>
-                  <div className="text-xs text-stone-400">
+                  <div className="text-xs text-stone-400 dark:text-stone-500">
                     {b.passenger_phone ?? ""}
                   </div>
                   {b.invoice_country && (
-                    <div className="text-xs text-stone-400">
+                    <div className="text-xs text-stone-400 dark:text-stone-500">
                       {b.invoice_country}
                     </div>
                   )}
@@ -237,34 +245,34 @@ export default async function BookingsPage({
                 {/* Route */}
                 <td className="px-3 py-2 max-w-[180px]">
                   <div className="truncate text-xs">
-                    <span className="text-stone-400">From </span>
-                    <span className="text-stone-700">
+                    <span className="text-stone-400 dark:text-stone-500">From </span>
+                    <span className="text-stone-700 dark:text-stone-200">
                       {b.pickup_city ?? b.pickup_address ?? "—"}
                     </span>
                   </div>
                   <div className="truncate text-xs">
-                    <span className="text-stone-400">To </span>
-                    <span className="text-stone-700">
+                    <span className="text-stone-400 dark:text-stone-500">To </span>
+                    <span className="text-stone-700 dark:text-stone-200">
                       {b.dropoff_city ?? b.dropoff_address ?? "—"}
                     </span>
                   </div>
                   {b.nearest_airport && (
-                    <div className="text-xs text-stone-400">
+                    <div className="text-xs text-stone-400 dark:text-stone-500">
                       ✈ {b.nearest_airport}
                     </div>
                   )}
                   {b.distance_km && (
-                    <div className="text-xs text-stone-400">
+                    <div className="text-xs text-stone-400 dark:text-stone-500">
                       {b.distance_km} km
                     </div>
                   )}
                 </td>
 
                 {/* Pickup */}
-                <td className="px-3 py-2 whitespace-nowrap text-xs text-stone-700">
+                <td className="px-3 py-2 whitespace-nowrap text-xs text-stone-700 dark:text-stone-200">
                   <div>{fmtDate(b.pickup_date_time)}</div>
                   {b.pickup_dow !== null && b.pickup_dow !== undefined && (
-                    <div className="text-stone-400">{DOW[b.pickup_dow]}</div>
+                    <div className="text-stone-400 dark:text-stone-500">{DOW[b.pickup_dow]}</div>
                   )}
                   {b.pickup_location_type && (
                     <Badge tone="neutral">{b.pickup_location_type}</Badge>
@@ -272,12 +280,12 @@ export default async function BookingsPage({
                 </td>
 
                 {/* Vehicle */}
-                <td className="px-3 py-2 text-xs text-stone-700">
+                <td className="px-3 py-2 text-xs text-stone-700 dark:text-stone-200">
                   {b.vehicle_type ?? "—"}
                 </td>
 
                 {/* Pax */}
-                <td className="px-3 py-2 text-xs text-stone-700 text-center">
+                <td className="px-3 py-2 text-xs text-stone-700 text-center dark:text-stone-200">
                   {b.passenger_count ?? "—"}
                 </td>
 
@@ -288,7 +296,7 @@ export default async function BookingsPage({
                       {b.direction}
                     </Badge>
                   ) : (
-                    <span className="text-xs text-stone-300">—</span>
+                    <span className="text-xs text-stone-300 dark:text-stone-600">—</span>
                   )}
                 </td>
 
@@ -298,24 +306,24 @@ export default async function BookingsPage({
                     {b.outcome ?? "—"}
                   </Badge>
                   {b.status && b.status !== b.outcome && (
-                    <div className="mt-0.5 text-xs text-stone-400">
+                    <div className="mt-0.5 text-xs text-stone-400 dark:text-stone-500">
                       {b.status}
                     </div>
                   )}
                 </td>
 
                 {/* Amount */}
-                <td className="px-3 py-2 whitespace-nowrap text-xs font-medium text-stone-700">
+                <td className="px-3 py-2 whitespace-nowrap text-xs font-medium text-stone-700 dark:text-stone-200">
                   {b.amount != null ? `€${b.amount.toFixed(2)}` : "—"}
                 </td>
 
                 {/* Platform */}
-                <td className="px-3 py-2 text-xs text-stone-600">
+                <td className="px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
                   {b.plateform ?? "—"}
                 </td>
 
                 {/* Lead time */}
-                <td className="px-3 py-2 text-xs text-stone-500">
+                <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
                   {formatLeadTime(b.book_lead_time) ?? "—"}
                 </td>
               </tr>
@@ -324,13 +332,13 @@ export default async function BookingsPage({
         </table>
 
         {bookings.length === 0 && (
-          <p className="p-8 text-center text-stone-400">No bookings found.</p>
+          <p className="p-8 text-center text-stone-400 dark:text-stone-500">No bookings found.</p>
         )}
       </div>
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-xs text-stone-500">
+        <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
           <span>
             Page {page + 1} of {totalPages} —{" "}
             {total.toLocaleString()} total
@@ -339,7 +347,7 @@ export default async function BookingsPage({
             {page > 0 && (
               <Link
                 href={`/admin/bookings?page=${page - 1}${sp.outcome ? `&outcome=${sp.outcome}` : ""}`}
-                className="rounded border border-stone-200 bg-white px-3 py-1 hover:bg-stone-50"
+                className="rounded border border-stone-200 bg-white px-3 py-1 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700"
               >
                 ← Previous
               </Link>
@@ -347,7 +355,7 @@ export default async function BookingsPage({
             {page + 1 < totalPages && (
               <Link
                 href={`/admin/bookings?page=${page + 1}${sp.outcome ? `&outcome=${sp.outcome}` : ""}`}
-                className="rounded border border-stone-200 bg-white px-3 py-1 hover:bg-stone-50"
+                className="rounded border border-stone-200 bg-white px-3 py-1 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700"
               >
                 Next →
               </Link>
