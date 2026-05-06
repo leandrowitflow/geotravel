@@ -1,9 +1,10 @@
 /**
  * Geotravel Data API client.
  * REST API for external access to bookings data.
- * Documented query params (Geotravel): limit (1–500), offset, outcome, from, to,
- * pickup_city, dropoff_city, country, airport. We also send optional probes for
- * booking_reference / ref / passenger_phone / plateform if the edge function adds them.
+ * Documented query params include limit (1–500), offset, outcome, status, from, to,
+ * pickup_city, dropoff_city, country, airport, passenger_phone (server-side phone filter:
+ * any format, min 6 digits, matches last 9 stored digits), booking_reference / ref,
+ * plateform, etc.
  * @see https://geotraveldata.com/api-docs
  */
 
@@ -54,10 +55,11 @@ export type GeotravelBookingsParams = {
   dropoff_city?: string;
   country?: string;
   airport?: string;
-  /** If the edge function supports it, filters server-side (avoids client scan). */
+  /** Server-side filter when the API supports it (avoids ref client scan). */
   booking_reference?: string;
   /** Alternate param name some deployments use. */
   ref?: string;
+  /** Server-side phone filter (Geotravel normalizes input; min 6 digits). */
   passenger_phone?: string;
   plateform?: string;
 };
@@ -281,28 +283,32 @@ export async function fetchGeotravelBookingsRefScan(input: {
 }
 
 /**
- * Loads bookings from the Geotravel API, then finds rows whose passenger phone
- * matches `phoneDigits` by paging through results in API order (same filters as
- * a normal list). Use this so numbers that are not on page 1 still appear.
+ * Phone search using Geotravel’s `passenger_phone` query param (any format; server
+ * normalizes; matches last 9 stored digits; min 6 digits in the request).
+ * Phone-only: one paginated API call per page. Phone + ref: loads phone-filtered pages
+ * and filters by ref client-side (capped by GEOTRAVEL_MAX_SCAN_ROWS).
  */
 export async function fetchGeotravelBookingsPhoneScan(input: {
   outcome?: string;
   airport?: string;
   status?: string;
+  /** Digits used for validation and a defensive client-side match check. */
   phoneDigits: string;
+  /** Raw search value sent as `passenger_phone` when it contains enough digits. */
+  passengerPhoneParam?: string;
   refSubstring?: string;
   page: number;
   limit: number;
 }): Promise<GeotravelBookingsResult> {
   const queryDigits = input.phoneDigits.replace(/\D/g, "").trim();
   if (!queryDigits) {
-    return fetchGeotravelBookings({
-      limit: input.limit,
-      offset: input.page * input.limit,
-      outcome: input.outcome,
-      airport: input.airport,
-      status: input.status,
-    });
+    return { ok: false, error: "Phone search requires at least one digit." };
+  }
+  if (queryDigits.length < 6) {
+    return {
+      ok: false,
+      error: "Phone filter requires at least 6 digits (Geotravel API).",
+    };
   }
 
   const base: GeotravelBookingsParams = {
@@ -311,67 +317,56 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
     status: input.status,
   };
 
+  const rawParam = input.passengerPhoneParam?.trim();
+  const phoneParam =
+    rawParam && rawParam.replace(/\D/g, "").length >= 6 ? rawParam : queryDigits;
+
   const refExtra = input.refSubstring?.trim().toLowerCase();
 
   const totalRes = await fetchGeotravelBookings({ ...base, limit: 1, offset: 0 });
   if (!totalRes.ok) return totalRes;
   const Tu = totalRes.pagination.total;
 
-  if (!refExtra && Tu > 0) {
-    const phoneVariants = new Set<string>([queryDigits]);
-    if (queryDigits.startsWith("351")) {
-      phoneVariants.add(`+${queryDigits}`);
-    } else {
-      phoneVariants.add(`351${queryDigits}`);
-      phoneVariants.add(`+351${queryDigits}`);
-    }
+  if (Tu === 0) {
+    return {
+      ok: true,
+      data: [],
+      pagination: { offset: 0, limit: input.limit, total: 0 },
+      phoneSearchApiTotal: 0,
+      phoneScanTruncated: false,
+      serverSideFilter: true,
+    };
+  }
 
-    let chosenPhone: string | null = null;
-    let Tf = Tu;
-    for (const p of phoneVariants) {
-      const probe = await fetchGeotravelBookings({
-        ...base,
-        passenger_phone: p,
-        limit: 1,
-        offset: 0,
-      });
-      if (!probe.ok) return probe;
-      if (probe.pagination.total < Tu) {
-        chosenPhone = p;
-        Tf = probe.pagination.total;
-        break;
-      }
-    }
-
-    if (chosenPhone) {
-      const pageRes = await fetchGeotravelBookings({
-        ...base,
-        passenger_phone: chosenPhone,
-        limit: input.limit,
+  if (!refExtra) {
+    const pageRes = await fetchGeotravelBookings({
+      ...base,
+      passenger_phone: phoneParam,
+      limit: input.limit,
+      offset: input.page * input.limit,
+    });
+    if (!pageRes.ok) return pageRes;
+    const Tf = pageRes.pagination.total;
+    const data = pageRes.data.filter((row) =>
+      phoneDigitsMatch(row.passenger_phone, queryDigits),
+    );
+    return {
+      ok: true,
+      data,
+      pagination: {
         offset: input.page * input.limit,
-      });
-      if (!pageRes.ok) return pageRes;
-      let data = pageRes.data.filter((row) =>
-        phoneDigitsMatch(row.passenger_phone, queryDigits),
-      );
-      return {
-        ok: true,
-        data,
-        pagination: {
-          offset: input.page * input.limit,
-          limit: input.limit,
-          total: Tf,
-        },
-        phoneSearchApiTotal: Tu,
-        phoneScanTruncated: false,
-        serverSideFilter: true,
-      };
-    }
+        limit: input.limit,
+        total: Tf,
+      },
+      phoneSearchApiTotal: Tu,
+      phoneScanTruncated: false,
+      serverSideFilter: true,
+    };
   }
 
   const scanCap = maxCrossPageScanRows();
   const matches: GeotravelBooking[] = [];
-  let apiTotal = 0;
+  let apiPhoneTotal = 0;
   let offset = 0;
   let pageIndex = 0;
 
@@ -379,16 +374,18 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
     await paceCrossPageRequest(pageIndex);
     const r = await fetchGeotravelBookings({
       ...base,
+      passenger_phone: phoneParam,
       limit: CROSS_PAGE_CHUNK,
       offset,
     });
     pageIndex += 1;
     if (!r.ok) return r;
 
-    apiTotal = r.pagination.total;
-    const maxOffset = Math.min(apiTotal, scanCap);
+    apiPhoneTotal = r.pagination.total;
+    const maxOffset = Math.min(apiPhoneTotal, scanCap);
 
     for (const row of r.data) {
+      if (!refRowMatches(row, refExtra)) continue;
       if (!phoneDigitsMatch(row.passenger_phone, queryDigits)) continue;
       matches.push(row);
     }
@@ -398,29 +395,20 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
     if (offset >= maxOffset) break;
   }
 
-  const truncated = apiTotal > scanCap;
-
+  const truncated = apiPhoneTotal > scanCap;
   const unique = [...new Map(matches.map((b) => [b.id, b])).values()];
-  const filtered = refExtra
-    ? unique.filter((b) => refRowMatches(b, refExtra))
-    : unique;
-
-  const totalMatches = filtered.length;
+  const totalMatches = unique.length;
   const start = input.page * input.limit;
-  const slice = filtered.slice(start, start + input.limit);
+  const slice = unique.slice(start, start + input.limit);
 
   return {
     ok: true,
     data: slice,
-    pagination: {
-      offset: start,
-      limit: input.limit,
-      total: totalMatches,
-    },
+    pagination: { offset: start, limit: input.limit, total: totalMatches },
+    phoneSearchApiTotal: Tu,
     phoneScanTruncated: truncated,
-    phoneSearchApiTotal: apiTotal,
-    serverSideFilter: false,
-    clientScanRowCap: scanCap,
+    serverSideFilter: true,
+    clientScanRowCap: truncated ? scanCap : undefined,
   };
 }
 

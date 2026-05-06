@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
+import { SendGeotravelWhatsAppButton } from "@/components/admin/send-geotravel-whatsapp-button";
 import {
   fetchGeotravelBookings,
   fetchGeotravelBookingsPhoneScan,
@@ -318,12 +319,25 @@ export async function BookingsView({
   const phoneQ = sp.phone?.trim();
   const phoneDigits = phoneQ?.replace(/\D/g, "").trim() ?? "";
 
+  if (phoneQ && phoneDigits.length > 0 && phoneDigits.length < 6) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <p className="font-semibold">Customer phone filter needs at least 6 digits</p>
+        <p className="mt-1 text-amber-800/90 dark:text-amber-200/90">
+          The Geotravel API <span className="font-mono">passenger_phone</span> parameter accepts any format, but the
+          normalized value must include at least six digits. Add more digits or clear the phone field.
+        </p>
+      </div>
+    );
+  }
+
   const result = phoneDigits
     ? await fetchGeotravelBookingsPhoneScan({
         outcome: sp.outcome,
         airport: sp.airport,
         status: apiStatus,
         phoneDigits,
+        passengerPhoneParam: phoneQ,
         refSubstring: refQ,
         page,
         limit,
@@ -356,10 +370,9 @@ export async function BookingsView({
           <p className="mt-3 text-stone-600 dark:text-stone-400">
             The Geotravel Data API is rate-limiting requests. Wait a minute, then use{" "}
             <span className="font-medium">Refresh data</span>. If you were not searching by ref/phone, try again with a
-            quiet period. If searches still fail, ask Geotravel to enable{" "}
-            <span className="font-mono">booking_reference</span> / <span className="font-mono">passenger_phone</span>{" "}
-            query filters (then this app uses one request per page) or raise your quota. Optional:{" "}
-            <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> controls how far client-side scans walk.
+            quiet period.             For ref-only searches, a <span className="font-mono">booking_reference</span> /{" "}
+            <span className="font-mono">ref</span> URL filter avoids large client scans.{" "}
+            <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> caps how many rows ref-only or phone+ref walks.
           </p>
         ) : (
           <p className="mt-3 text-stone-500 dark:text-stone-400">
@@ -463,10 +476,9 @@ export async function BookingsView({
             )}
             {phoneScanTruncated && (
               <span className="block pt-1 text-xs text-amber-700 dark:text-amber-300/90">
-                Phone search only walked the first {scanCapText} rows reported by the API (client-side cap). Set{" "}
-                <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> in{" "}
-                <span className="font-mono">.env.local</span> up to 200000 if Geotravel raises your quota, or ask them for
-                a <span className="font-mono">passenger_phone</span> query parameter.
+                Phone + ref search loaded at most the first {scanCapText} rows that matched the phone filter (see{" "}
+                <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span>). Totals may be incomplete; raise the cap if your
+                quota allows.
               </span>
             )}
             {refScanTruncated && (
@@ -571,9 +583,13 @@ export async function BookingsView({
           />
         </div>
         <p className="border-b border-stone-200 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
-          Status is sent to the Geotravel API. Column headers sort this page ({limit} rows).
+          Status is sent to the Geotravel API. Column headers sort this page ({limit} rows).{" "}
+          <span className="text-stone-600 dark:text-stone-300">
+            WhatsApp confirm (Active + CONFIRMED) is enabled only for passenger phone containing{" "}
+            <span className="font-mono">966915976</span>.
+          </span>
           {phoneScanActive
-            ? " Customer phone uses a server filter when the API supports it; otherwise a capped client scan (see GEOTRAVEL_MAX_SCAN_ROWS). Ref narrows phone matches when both are set."
+            ? " Customer phone uses the Geotravel passenger_phone filter (≥6 digits, any format). With Ref, results are phone-filtered on the server and narrowed by ref on our side (capped by GEOTRAVEL_MAX_SCAN_ROWS)."
             : refScanActive
               ? " Ref uses a server filter when the API supports booking_reference/ref params; otherwise a capped client scan."
               : ` Without Ref or phone search you get one API page (${limit} rows). Use Search to trigger a server or capped client search.`}
@@ -593,6 +609,7 @@ export async function BookingsView({
               <SortTh label="Amount" column="amount" page={page} sp={sp} />
               <SortTh label="Platform" column="platform" page={page} sp={sp} />
               <SortTh label="Lead time" column="lead_time" page={page} sp={sp} />
+              <th className="px-3 py-2 font-semibold whitespace-nowrap">WhatsApp</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
@@ -723,6 +740,10 @@ export async function BookingsView({
                 <td className="px-3 py-2 text-xs text-stone-500 dark:text-stone-400">
                   {formatLeadTime(b.book_lead_time) ?? "—"}
                 </td>
+
+                <td className="px-3 py-2 align-top">
+                  <SendGeotravelWhatsAppButton booking={b} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -732,7 +753,7 @@ export async function BookingsView({
           <p className="p-8 text-center text-stone-400 dark:text-stone-500">
             {phoneScanActive
               ? phoneScanTruncated
-                ? `No rows matched that phone in the first ${scanCapText} API results. Try narrowing filters, increasing GEOTRAVEL_MAX_SCAN_ROWS, or a different digit substring.`
+                ? `No rows matched both phone and ref within the first ${scanCapText} phone-matched bookings. Try increasing GEOTRAVEL_MAX_SCAN_ROWS, loosening filters, or search phone alone.`
                 : "No rows matched that phone under these filters in the Geotravel API."
               : refScanActive
                 ? refScanTruncated
