@@ -1,0 +1,83 @@
+import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
+import type { SupportedLanguage } from "@/lib/contracts/extraction";
+import { buildInitialOutreachMessage } from "@/lib/orchestration/outreach-first-message";
+
+/** Pilot: only this national number may receive the admin “WhatsApp confirm” action. */
+export const WHATSAPP_PILOT_PHONE_DIGITS = "966915976";
+
+export function bookingHasPilotPhone(booking: GeotravelBooking): boolean {
+  const d = (booking.passenger_phone ?? "").replace(/\D/g, "");
+  return d.includes(WHATSAPP_PILOT_PHONE_DIGITS);
+}
+
+function formatRouteStop(
+  city: string | null,
+  address: string | null,
+): string | null {
+  const parts = [city?.trim(), address?.trim()].filter(Boolean);
+  if (parts.length === 0) return null;
+  return parts.join(" — ");
+}
+
+function guessLanguage(booking: GeotravelBooking): SupportedLanguage {
+  const c = (booking.invoice_country ?? "").toLowerCase();
+  if (c.includes("portugal") || c === "pt") return "pt";
+  if (c.startsWith("es") || c === "spain") return "es";
+  if (c.startsWith("fr") || c === "france") return "fr";
+  if (c.startsWith("de") || c === "germany" || c === "deutschland") return "de";
+  const phone = (booking.passenger_phone ?? "").replace(/\D/g, "");
+  if (phone.startsWith("351")) return "pt";
+  return "pt";
+}
+
+function yesNoFooter(lang: SupportedLanguage): string {
+  if (lang === "pt") {
+    return "\n\nEstá tudo correto? Responda *SIM* para confirmar ou *NÃO* se algum dado estiver errado.";
+  }
+  if (lang === "es") {
+    return "\n\n¿Todo es correcto? Responda *SÍ* para confirmar o *NO* si algo no cuadra.";
+  }
+  if (lang === "fr") {
+    return "\n\nTout est correct ? Répondez *OUI* pour confirmer ou *NON* si quelque chose est incorrect.";
+  }
+  if (lang === "de") {
+    return "\n\nIst alles korrekt? Antworten Sie *JA* zur Bestätigung oder *NEIN*, wenn etwas nicht stimmt.";
+  }
+  return "\n\nIs everything correct? Reply *YES* to confirm or *NO* if something is wrong.";
+}
+
+/**
+ * First WhatsApp for a row from the Geotravel Data API: trip summary + enrichment
+ * questions, plus an explicit binary confirmation (SIM/NÃO, etc.).
+ */
+export function buildGeotravelWhatsAppConfirmationMessage(
+  booking: GeotravelBooking,
+): string {
+  const lang = guessLanguage(booking);
+  const ref = booking.booking_reference?.trim() || String(booking.id);
+  const pickup =
+    formatRouteStop(booking.pickup_city, booking.pickup_address) ?? "—";
+  const dropoff =
+    formatRouteStop(booking.dropoff_city, booking.dropoff_address) ?? "—";
+
+  const core = buildInitialOutreachMessage({
+    customerName: booking.passenger_name,
+    externalBookingId: ref,
+    pickupLocation: pickup,
+    dropoffLocation: dropoff,
+    pickupDatetimeIso: booking.pickup_date_time,
+    contactPreferredLanguage: lang,
+  });
+  return `${core}${yesNoFooter(lang)}`;
+}
+
+export function isBookingEligibleForWhatsAppConfirmation(
+  booking: GeotravelBooking,
+): boolean {
+  if (!bookingHasPilotPhone(booking)) return false;
+  if (booking.outcome !== "Active") return false;
+  const st = (booking.status ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+  if (st !== "CONFIRMED") return false;
+  const digits = (booking.passenger_phone ?? "").replace(/\D/g, "");
+  return digits.length >= 8;
+}
