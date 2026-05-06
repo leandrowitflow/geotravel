@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import {
   fetchGeotravelBookings,
@@ -84,19 +85,6 @@ function sortBookingsData(
     return (a.id - b.id) * mul;
   });
 }
-
-/** Geotravel API status values (dropdown). */
-const BOOKING_STATUSES = [
-  "ACCEPTED",
-  "CANCELLED",
-  "COMPLETE",
-  "CONFIRMED",
-  "DRIVER_ASSIGNED",
-  "FREE CANCELLATION",
-  "NEW",
-  "PENDING_AMENDMENT",
-  "PENDING_CANCELLATION",
-] as const;
 
 function filterByRefPhone(
   rows: GeotravelBooking[],
@@ -566,81 +554,21 @@ export async function BookingsView({
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
         <div className="border-b border-stone-200 px-3 py-3 dark:border-stone-700">
-          <form action="/admin/bookings" method="get" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            {sp.outcome ? <input type="hidden" name="outcome" value={sp.outcome} /> : null}
-            {sp.airport ? <input type="hidden" name="airport" value={sp.airport} /> : null}
-            {sp.sort ? <input type="hidden" name="sort" value={sp.sort} /> : null}
-            {sp.order === "desc" ? <input type="hidden" name="order" value="desc" /> : null}
-            <div className="flex min-w-[140px] flex-1 flex-col gap-1">
-              <label htmlFor="bookings-ref" className="text-xs font-medium text-stone-600 dark:text-stone-400">
-                Ref
-              </label>
-              <input
-                id="bookings-ref"
-                name="ref"
-                type="search"
-                defaultValue={sp.ref ?? ""}
-                placeholder="Reference or ID…"
-                className="w-full rounded border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100 dark:placeholder:text-stone-500"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex min-w-[160px] flex-1 flex-col gap-1">
-              <label htmlFor="bookings-phone" className="text-xs font-medium text-stone-600 dark:text-stone-400">
-                Customer phone
-              </label>
-              <input
-                id="bookings-phone"
-                name="phone"
-                type="search"
-                defaultValue={sp.phone ?? ""}
-                placeholder="Digits only…"
-                className="w-full rounded border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100 dark:placeholder:text-stone-500"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex min-w-[180px] flex-1 flex-col gap-1">
-              <label htmlFor="bookings-status" className="text-xs font-medium text-stone-600 dark:text-stone-400">
-                Status
-              </label>
-              <select
-                id="bookings-status"
-                name="status"
-                defaultValue={apiStatus ?? ""}
-                className="w-full rounded border border-stone-300 bg-white px-2 py-1.5 text-sm text-stone-900 focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-100"
-              >
-                <option value="">Any status</option>
-                {apiStatus &&
-                  !(BOOKING_STATUSES as readonly string[]).includes(apiStatus) && (
-                    <option value={apiStatus}>{apiStatus.replace(/_/g, " ")}</option>
-                  )}
-                {BOOKING_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s.replace(/_/g, " ")}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="submit"
-                className="rounded-md bg-teal-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-teal-800 dark:bg-teal-600 dark:hover:bg-teal-500"
-              >
-                Search
-              </button>
-              <Link
-                href={`/admin/bookings${bookingsQuery({
-                  outcome: sp.outcome,
-                  airport: sp.airport,
-                  sort: sp.sort,
-                  order: sp.order === "desc" ? "desc" : undefined,
-                })}`}
-                className="rounded-md border border-stone-300 px-4 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-600 dark:text-stone-200 dark:hover:bg-stone-800"
-              >
-                Clear search
-              </Link>
-            </div>
-          </form>
+          <BookingsSearchForm
+            outcome={sp.outcome}
+            airport={sp.airport}
+            sort={sp.sort}
+            orderIsDesc={sp.order === "desc"}
+            defaultRef={sp.ref ?? ""}
+            defaultPhone={sp.phone ?? ""}
+            defaultStatus={apiStatus ?? ""}
+            clearSearchHref={`/admin/bookings${bookingsQuery({
+              outcome: sp.outcome,
+              airport: sp.airport,
+              sort: sp.sort,
+              order: sp.order === "desc" ? "desc" : undefined,
+            })}`}
+          />
         </div>
         <p className="border-b border-stone-200 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
           Status is sent to the Geotravel API. Column headers sort this page ({limit} rows).
