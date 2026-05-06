@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { getCaseDetail } from "@/lib/admin/queries";
 import { CaseActions } from "./case-actions";
 
@@ -29,7 +30,10 @@ export default async function CaseDetailPage({
           </h1>
           <p className="font-mono text-xs text-stone-500 dark:text-stone-400">{c.id}</p>
         </div>
-        <CaseActions caseId={c.id} />
+        <div className="flex flex-wrap items-center gap-2">
+          <RefreshDataButton />
+          <CaseActions caseId={c.id} />
+        </div>
       </div>
 
       <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
