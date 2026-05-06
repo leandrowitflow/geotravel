@@ -1,6 +1,5 @@
 /**
- * Seeds the Geotravel-style mock reservation (+351966915976) as a real DB case
- * for WhatsApp testing (same ref as GEOTRAVEL_MOCK_BOOKINGS row on /admin/bookings).
+ * Seeds a demo reservation (+351966915976) as a real DB case for WhatsApp testing.
  *
  * Run: npm run db:seed
  *
@@ -43,7 +42,7 @@ async function main() {
     "WhatsApp test case ready. Inbound messages from +351966915976 will match this contact.",
   );
   console.log("  /admin/cases — reservation_id:", result.reservationId, "case_id:", result.caseId ?? "(existing dup)");
-  console.log("  /admin/bookings — enable GEOTRAVEL_MOCK_BOOKINGS=1 to see the same ref in the Geotravel table.");
+  console.log("  /admin/bookings — use Customer phone search (e.g. 966915976) to find live API rows with that number.");
 }
 
 main().catch((e) => {

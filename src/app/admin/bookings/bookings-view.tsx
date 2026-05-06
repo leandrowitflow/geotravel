@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import {
   fetchGeotravelBookings,
+  fetchGeotravelBookingsPhoneScan,
+  fetchGeotravelBookingsRefScan,
   type GeotravelBooking,
 } from "@/lib/geotravel/bookings-api";
 
@@ -321,43 +324,86 @@ export async function BookingsView({
 }) {
   const sp = await searchParams;
   const page = Math.max(0, Number(sp.page ?? 0));
-  const limit = 100;
+  const limit = 500;
   const apiStatus = sp.status?.trim() || undefined;
+  const refQ = sp.ref?.trim();
+  const phoneQ = sp.phone?.trim();
+  const phoneDigits = phoneQ?.replace(/\D/g, "").trim() ?? "";
 
-  const result = await fetchGeotravelBookings({
-    limit,
-    offset: page * limit,
-    outcome: sp.outcome,
-    airport: sp.airport,
-    status: apiStatus,
-  });
+  const result = phoneDigits
+    ? await fetchGeotravelBookingsPhoneScan({
+        outcome: sp.outcome,
+        airport: sp.airport,
+        status: apiStatus,
+        phoneDigits,
+        refSubstring: refQ,
+        page,
+        limit,
+      })
+    : refQ
+      ? await fetchGeotravelBookingsRefScan({
+          outcome: sp.outcome,
+          airport: sp.airport,
+          status: apiStatus,
+          refSubstring: refQ,
+          page,
+          limit,
+        })
+      : await fetchGeotravelBookings({
+          limit,
+          offset: page * limit,
+          outcome: sp.outcome,
+          airport: sp.airport,
+          status: apiStatus,
+        });
 
   if (!result.ok) {
+    const rateLimited =
+      result.error.includes("429") || result.error.toLowerCase().includes("rate limit");
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
         <p className="font-semibold">Failed to load bookings</p>
         <p className="mt-1 font-mono text-xs">{result.error}</p>
-        <p className="mt-3 text-stone-500 dark:text-stone-400">
-          Check that{" "}
-          <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
-            GEOTRAVEL_API_KEY
-          </code>{" "}
-          is set in{" "}
-          <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
-            .env.local
-          </code>
-          .
-        </p>
+        {rateLimited ? (
+          <p className="mt-3 text-stone-600 dark:text-stone-400">
+            The Geotravel Data API is rate-limiting requests. Wait a minute, then use{" "}
+            <span className="font-medium">Refresh data</span>. If you were not searching by ref/phone, try again with a
+            quiet period. If searches still fail, ask Geotravel to enable{" "}
+            <span className="font-mono">booking_reference</span> / <span className="font-mono">passenger_phone</span>{" "}
+            query filters (then this app uses one request per page) or raise your quota. Optional:{" "}
+            <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> controls how far client-side scans walk.
+          </p>
+        ) : (
+          <p className="mt-3 text-stone-500 dark:text-stone-400">
+            Check that{" "}
+            <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
+              GEOTRAVEL_API_KEY
+            </code>{" "}
+            is set in{" "}
+            <code className="rounded bg-stone-100 px-1 dark:bg-stone-800 dark:text-stone-200">
+              .env.local
+            </code>
+            .
+          </p>
+        )}
       </div>
     );
   }
 
   const bookings = result.data;
   const { total } = result.pagination;
+  const clientScanCap = result.clientScanRowCap;
+  const serverSideFilter = Boolean(result.serverSideFilter);
+  const scanCapText = (clientScanCap ?? 12_000).toLocaleString();
+  const apiGrandTotal =
+    result.ok && result.phoneSearchApiTotal != null
+      ? result.phoneSearchApiTotal
+      : result.ok && result.refSearchApiTotal != null
+        ? result.refSearchApiTotal
+        : total;
 
-  const refQ = sp.ref?.trim();
-  const phoneQ = sp.phone?.trim();
-  const filteredBySearch = filterByRefPhone(bookings, refQ, phoneQ);
+  const filteredBySearch =
+    phoneDigits || refQ ? bookings : filterByRefPhone(bookings, refQ, phoneQ);
 
   const sortColumn =
     sp.sort && isSortColumn(sp.sort) ? sp.sort : undefined;
@@ -375,7 +421,10 @@ export async function BookingsView({
     .reduce((s, b) => s + (b.amount ?? 0), 0);
 
   const totalPages = Math.ceil(total / limit);
-  const hasLocalSearch = Boolean(refQ || phoneQ);
+  const refScanActive = Boolean(refQ && !phoneDigits);
+  const phoneScanActive = Boolean(phoneDigits);
+  const phoneScanTruncated = result.ok && Boolean(result.phoneScanTruncated);
+  const refScanTruncated = result.ok && Boolean(result.refScanTruncated);
 
   return (
     <div className="space-y-6">
@@ -385,20 +434,75 @@ export async function BookingsView({
           <h1 className="text-2xl font-semibold text-stone-900 dark:text-stone-50">Bookings</h1>
           <p className="text-sm text-stone-500 dark:text-stone-400">
             Live data from Geotravel API —{" "}
-            <span className="font-medium text-stone-700 dark:text-stone-200">
-              {total.toLocaleString()}
-            </span>{" "}
-            total bookings
-            {hasLocalSearch && (
-              <span className="block pt-1 text-xs text-amber-700 dark:text-amber-300/90">
-                Ref and phone filters apply to this page of results only.
+            {phoneScanActive ? (
+              <>
+                <span className="font-medium text-stone-700 dark:text-stone-200">
+                  {total.toLocaleString()}
+                </span>{" "}
+                booking{total === 1 ? "" : "s"} matched phone
+                {refQ ? " and ref" : ""}
+                {" · "}
+                <span className="font-medium text-stone-700 dark:text-stone-200">
+                  {apiGrandTotal.toLocaleString()}
+                </span>{" "}
+                total in API under these filters
+              </>
+            ) : refScanActive ? (
+              <>
+                <span className="font-medium text-stone-700 dark:text-stone-200">
+                  {total.toLocaleString()}
+                </span>{" "}
+                booking{total === 1 ? "" : "s"} matched ref
+                {" · "}
+                <span className="font-medium text-stone-700 dark:text-stone-200">
+                  {apiGrandTotal.toLocaleString()}
+                </span>{" "}
+                total in API under these filters
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-stone-700 dark:text-stone-200">
+                  {total.toLocaleString()}
+                </span>{" "}
+                total bookings
+              </>
+            )}
+            {serverSideFilter && (
+              <span className="block pt-1 text-xs text-emerald-800 dark:text-emerald-300/90">
+                The Geotravel API accepted a server-side filter for this search (about one HTTP request per page). Use
+                pagination to walk every matching row without rate-limit bursts.
               </span>
             )}
+            {phoneScanTruncated && (
+              <span className="block pt-1 text-xs text-amber-700 dark:text-amber-300/90">
+                Phone search only walked the first {scanCapText} rows reported by the API (client-side cap). Set{" "}
+                <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> in{" "}
+                <span className="font-mono">.env.local</span> up to 200000 if Geotravel raises your quota, or ask them for
+                a <span className="font-mono">passenger_phone</span> query parameter.
+              </span>
+            )}
+            {refScanTruncated && (
+              <span className="block pt-1 text-xs text-amber-700 dark:text-amber-300/90">
+                Ref search only walked the first {scanCapText} rows (client-side cap). Set{" "}
+                <span className="font-mono">GEOTRAVEL_MAX_SCAN_ROWS</span> if your quota allows, or ask Geotravel for a{" "}
+                <span className="font-mono">booking_reference</span> URL filter so one request returns matches.
+              </span>
+            )}
+            <span className="mt-2 block rounded-md border border-stone-200 bg-stone-100/80 px-2 py-1.5 text-xs text-stone-600 dark:border-stone-600 dark:bg-stone-800/80 dark:text-stone-300">
+              <strong className="font-medium text-stone-800 dark:text-stone-200">Data source:</strong> this table calls the{" "}
+              <span className="font-mono">Geotravel Data API</span> on every load and on{" "}
+              <span className="font-medium">Refresh data</span> (no browser cache). Reservations you create only inside this app (
+              <span className="font-mono">/admin/cases</span>, Supabase) do{" "}
+              <strong className="font-medium">not</strong> appear here unless that external API returns them.
+            </span>
           </p>
         </div>
-        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-          Live
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <RefreshDataButton />
+          <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            Live
+          </span>
+        </div>
       </div>
 
       {/* Filters */}
@@ -441,9 +545,11 @@ export async function BookingsView({
           label="Showing"
           value={sortedBookings.length}
           sub={
-            hasLocalSearch
-              ? `${filteredBySearch.length} on page before sort · ${total.toLocaleString()} from API`
-              : `of ${total.toLocaleString()} total`
+            phoneScanActive
+              ? `${sortedBookings.length} on page · ${total.toLocaleString()} match${total === 1 ? "" : "es"} · ${apiGrandTotal.toLocaleString()} in API`
+              : refScanActive
+                ? `${sortedBookings.length} on page · ${total.toLocaleString()} match${total === 1 ? "" : "es"} · ${apiGrandTotal.toLocaleString()} in API`
+                : `of ${total.toLocaleString()} total`
           }
           tone="neutral"
         />
@@ -537,7 +643,12 @@ export async function BookingsView({
           </form>
         </div>
         <p className="border-b border-stone-200 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
-          Status is sent to the Geotravel API (all pages). Column headers sort this page ({limit} rows). Ref and phone narrow the current page after fetch.
+          Status is sent to the Geotravel API. Column headers sort this page ({limit} rows).
+          {phoneScanActive
+            ? " Customer phone uses a server filter when the API supports it; otherwise a capped client scan (see GEOTRAVEL_MAX_SCAN_ROWS). Ref narrows phone matches when both are set."
+            : refScanActive
+              ? " Ref uses a server filter when the API supports booking_reference/ref params; otherwise a capped client scan."
+              : ` Without Ref or phone search you get one API page (${limit} rows). Use Search to trigger a server or capped client search.`}
         </p>
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-stone-200 bg-stone-50 text-xs text-stone-600 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300">
@@ -691,9 +802,17 @@ export async function BookingsView({
 
         {sortedBookings.length === 0 && (
           <p className="p-8 text-center text-stone-400 dark:text-stone-500">
-            {bookings.length > 0 && (refQ || phoneQ)
-              ? "No rows match ref or phone on this page. Try another page or clear ref/phone."
-              : "No bookings found."}
+            {phoneScanActive
+              ? phoneScanTruncated
+                ? `No rows matched that phone in the first ${scanCapText} API results. Try narrowing filters, increasing GEOTRAVEL_MAX_SCAN_ROWS, or a different digit substring.`
+                : "No rows matched that phone under these filters in the Geotravel API."
+              : refScanActive
+                ? refScanTruncated
+                  ? `No rows matched that ref in the first ${scanCapText} API results. Try narrowing filters or increasing GEOTRAVEL_MAX_SCAN_ROWS.`
+                  : "No rows matched that ref under these filters in the Geotravel API."
+                : bookings.length > 0 && phoneQ
+                  ? "No rows match phone on this page. Use digits in Customer phone and Search to scan the API."
+                  : "No bookings found."}
           </p>
         )}
       </div>
