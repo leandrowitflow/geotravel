@@ -49,7 +49,7 @@ export default function TermsPage() {
           Meta&apos;s WhatsApp Business Terms
         </a>{" "}
         and related policies. SMS may be subject to carrier and provider terms (for example
-        Twilio). You must comply with applicable law, obtain required consents, and honour opt-outs.
+        Infobip). You must comply with applicable law, obtain required consents, and honour opt-outs.
       </p>
       <h3 className="text-lg font-semibold">4. Acceptable use</h3>
       <p>
@@ -118,7 +118,7 @@ export default function TermsPage() {
           Termos comerciais do WhatsApp
         </a>{" "}
         e políticas relacionadas da Meta. O SMS pode estar sujeito a termos de operadoras e
-        fornecedores (por exemplo Twilio). Deve cumprir a legislação aplicável, obter consentimentos
+        fornecedores (por exemplo Infobip). Deve cumprir a legislação aplicável, obter consentimentos
         necessários e respeitar pedidos de exclusão / opt-out.
       </p>
       <h3 className="text-lg font-semibold">4. Utilização aceitável</h3>

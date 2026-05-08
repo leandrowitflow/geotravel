@@ -169,9 +169,15 @@ export async function POST(
             hint:
               send.error === "whatsapp_not_configured"
                 ? "Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env.local."
-                : row.currentChannel === "whatsapp"
-                  ? "WhatsApp often rejects free-form text outside the 24h customer window; use a template or have the customer message you first."
-                  : undefined,
+                : send.error === "infobip_not_configured"
+                  ? "Set INFOBIP_BASE_URL, INFOBIP_API_KEY, and INFOBIP_SMS_SENDER in .env.local."
+                  : send.error.startsWith("infobip_sms_rejected:")
+                    ? /NOT_ENOUGH_CREDITS|5754/i.test(send.error)
+                      ? "Infobip rejected the send: add credits or fix billing (REJECTED_NOT_ENOUGH_CREDITS)."
+                      : "Infobip rejected the SMS — check Infobip logs for the reason."
+                    : row.currentChannel === "whatsapp"
+                      ? "WhatsApp often rejects free-form text outside the 24h customer window; use a template or have the customer message you first."
+                      : undefined,
           },
           { status: 502 },
         );
