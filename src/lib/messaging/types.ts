@@ -13,5 +13,11 @@ export type OutboundMessage = {
 };
 
 export type SendResult =
-  | { ok: true; providerMessageId: string; channel: MessagingChannel }
+  | {
+      ok: true;
+      providerMessageId: string;
+      channel: MessagingChannel;
+      /** Infobip SMS: echoed destination and status when the API returns them. */
+      smsProviderMeta?: { destinationDigits?: string; status?: string };
+    }
   | { ok: false; error: string };

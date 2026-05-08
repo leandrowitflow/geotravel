@@ -1,6 +1,6 @@
 import { writeBehaviouralEvent } from "@/lib/events/write-behavioural-event";
+import { sendInfobipSms } from "./infobip-sms";
 import { sendWhatsAppMessage } from "./meta-whatsapp";
-import { sendTwilioSms } from "./twilio-sms";
 import type { MessagingChannel, OutboundMessage, SendResult } from "./types";
 
 export async function sendViaPreferredChannel(input: {
@@ -24,7 +24,7 @@ export async function sendViaPreferredChannel(input: {
   let result: SendResult =
     input.preferred === "whatsapp"
       ? await sendWhatsAppMessage(base)
-      : await sendTwilioSms({ ...base, channel: "sms" });
+      : await sendInfobipSms({ ...base, channel: "sms" });
 
   if (!result.ok && input.preferred === "whatsapp") {
     await writeBehaviouralEvent({
@@ -33,7 +33,7 @@ export async function sendViaPreferredChannel(input: {
       reservationId: input.reservationId,
       channel: "sms",
     });
-    result = await sendTwilioSms({
+    result = await sendInfobipSms({
       ...base,
       channel: "sms",
       body: input.body.slice(0, 300),

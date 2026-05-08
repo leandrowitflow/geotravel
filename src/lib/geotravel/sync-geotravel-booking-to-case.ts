@@ -3,15 +3,13 @@ import { mapCase } from "@/db/map-supabase";
 import { assertNoError, takeSingle } from "@/db/supabase-helpers";
 import { writeBehaviouralEvent } from "@/lib/events/write-behavioural-event";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
+import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 import { serviceSupabase } from "@/lib/supabase/service-role";
 
 const EXTERNAL_SOURCE = "geotravel_data_api";
 
 function normalizePhone(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length < 8) return null;
-  return `+${digits}`;
+  return normalizeGeotravelPhoneToE164(raw, { defaultCountryCode: "351" });
 }
 
 function externalBookingId(booking: GeotravelBooking): string {

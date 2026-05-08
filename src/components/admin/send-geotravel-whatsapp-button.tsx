@@ -33,6 +33,9 @@ export function SendGeotravelWhatsAppButton({
         error?: string;
         hint?: string;
         caseId?: string;
+        channel?: "whatsapp" | "sms";
+        destinationE164?: string;
+        smsProviderMeta?: { destinationDigits?: string; status?: string };
       };
       if (!res.ok) {
         setMsg({
@@ -41,7 +44,31 @@ export function SendGeotravelWhatsAppButton({
         });
         return;
       }
-      setMsg({ tone: "ok", text: "WhatsApp sent. Case updated." });
+      const via =
+        j.channel === "sms"
+          ? "SMS"
+          : j.channel === "whatsapp"
+            ? "WhatsApp"
+            : "Message";
+      const dest = j.destinationE164 ?? "";
+      const ibTo = j.smsProviderMeta?.destinationDigits;
+      const ibSt = j.smsProviderMeta?.status;
+      const destDigits = dest.replace(/\D/g, "");
+      const mismatch =
+        j.channel === "sms" && ibTo && ibTo !== destDigits
+          ? ` Infobip echoed ${ibTo} (expected ${destDigits}).`
+          : "";
+      setMsg({
+        tone: "ok",
+        text: [
+          `Sent via ${via} to ${dest || "?"}.`,
+          j.channel === "sms" && ibSt ? `Provider: ${ibSt}.` : null,
+          j.channel === "sms" ? mismatch.trim() || null : null,
+          "Case updated.",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
       router.refresh();
     } finally {
       setPending(false);
@@ -49,7 +76,7 @@ export function SendGeotravelWhatsAppButton({
   }
 
   return (
-    <div className="flex max-w-[140px] flex-col gap-1">
+    <div className="flex max-w-[min(100%,280px)] flex-col gap-1">
       <button
         type="button"
         disabled={pending}

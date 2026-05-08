@@ -10,6 +10,7 @@ import {
 } from "@/lib/geotravel/geotravel-confirmation-message";
 import { ensureReservationCaseFromGeotravel } from "@/lib/geotravel/sync-geotravel-booking-to-case";
 import { sendViaPreferredChannel } from "@/lib/messaging/send-via-channel";
+import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 import {
   assertTransition,
   canTransition,
@@ -17,6 +18,11 @@ import {
 } from "@/lib/orchestration/state-machine";
 import { defaultRetryDelayMinutes } from "@/lib/scheduling/quiet-hours";
 import { serviceSupabase } from "@/lib/supabase/service-role";
+
+function envTruthy(name: string): boolean {
+  const v = process.env[name]?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
 
 /** Loose schema: admin sends the row JSON from /admin/bookings. */
 const bookingSchema = z
@@ -94,17 +100,24 @@ export async function POST(req: Request) {
   }
 
   const bodyText = buildGeotravelWhatsAppConfirmationMessage(booking);
-  const to = booking.passenger_phone!.replace(/\D/g, "").length >= 8
-    ? `+${booking.passenger_phone!.replace(/\D/g, "")}`
-    : null;
+  const to = normalizeGeotravelPhoneToE164(booking.passenger_phone, {
+    defaultCountryCode: "351",
+  });
   if (!to) {
     return NextResponse.json({ error: "no_phone" }, { status: 400 });
   }
 
+  /** Meta may return 200 while the customer sees nothing; SMS fallback only runs on API error. Set GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1 to use Infobip for this action until templates/session work. */
+  const preferred: "whatsapp" | "sms" = envTruthy(
+    "GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS",
+  )
+    ? "sms"
+    : (ctx.currentChannel as "whatsapp" | "sms");
+
   const send = await sendViaPreferredChannel({
     caseId: ctx.caseId,
     reservationId: ctx.reservationPk,
-    preferred: ctx.currentChannel as "whatsapp" | "sms",
+    preferred,
     toE164: to,
     body: bodyText,
   });
@@ -116,9 +129,16 @@ export async function POST(req: Request) {
         hint:
           send.error === "whatsapp_not_configured"
             ? "Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in .env.local."
-            : ctx.currentChannel === "whatsapp"
-              ? "WhatsApp may reject free-form text outside the 24h window; user should message you first or use a template."
-              : undefined,
+            : send.error === "infobip_not_configured"
+              ? "Set INFOBIP_BASE_URL, INFOBIP_API_KEY, and INFOBIP_SMS_SENDER in .env.local and restart the dev server."
+              : send.error.startsWith("infobip_sms_rejected:") &&
+                  /NOT_ENOUGH_CREDITS|5754/i.test(send.error)
+                ? "Infobip rejected the send: add credits or fix billing in the Infobip portal (REJECTED_NOT_ENOUGH_CREDITS)."
+                : send.error.startsWith("infobip_sms_rejected:")
+                  ? "Infobip rejected the SMS — open Infobip logs for the full reason."
+                  : preferred === "whatsapp"
+                ? "WhatsApp may reject free-form text outside the 24h window; user should message you first or use a template. Or set GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1 to send via Infobip."
+                : undefined,
       },
       { status: 502 },
     );
@@ -155,5 +175,14 @@ export async function POST(req: Request) {
     );
   }
 
-  return NextResponse.json({ ok: true, caseId: ctx.caseId });
+  return NextResponse.json({
+    ok: true,
+    caseId: ctx.caseId,
+    channel: send.channel,
+    providerMessageId: send.providerMessageId,
+    /** E.164 we used (after PT national normalization). Compare with Infobip logs. */
+    destinationE164: to,
+    smsProviderMeta:
+      send.ok && send.channel === "sms" ? send.smsProviderMeta : undefined,
+  });
 }
