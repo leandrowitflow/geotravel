@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { processInboundMessaging } from "@/lib/orchestration/process-inbound-message";
 
+/** Inbound runs several OpenAI calls; default Vercel limit is too low and aborts before WhatsApp reply. */
+export const maxDuration = 60;
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const mode = url.searchParams.get("hub.mode");
@@ -32,6 +35,8 @@ type RawInboundMsg = {
   id?: string;
   type?: string;
   text?: { body?: string };
+  /** Template / marketing quick-reply taps (not the same shape as `interactive`). */
+  button?: { text?: string; payload?: string };
   interactive?: {
     type?: string;
     button_reply?: { id?: string; title?: string };
@@ -42,6 +47,11 @@ type RawInboundMsg = {
 function inboundBodyFromMessage(m: RawInboundMsg): string | null {
   const fromText = m.text?.body?.trim();
   if (fromText) return fromText;
+  const quickTap =
+    m.button?.text?.trim() ||
+    (m.button?.payload && String(m.button.payload).trim()) ||
+    null;
+  if (quickTap) return quickTap;
   const ir = m.interactive;
   if (!ir) return null;
   const btn = ir.button_reply?.title?.trim();
@@ -51,17 +61,27 @@ function inboundBodyFromMessage(m: RawInboundMsg): string | null {
   return null;
 }
 
-/** Log when Meta sent messages we did not map to text (helps debug missing timeline rows). */
+/** Log when Meta sent payloads we did not turn into user text (helps debug missing replies). */
 function logUnparsedWhatsAppMessages(payload: unknown) {
-  const p = payload as { object?: string; entry?: Array<{ changes?: unknown[] }> };
+  const p = payload as {
+    object?: string;
+    entry?: Array<{ changes?: unknown[] }>;
+  };
   if (p.object !== "whatsapp_business_account") return;
   const types: string[] = [];
+  const fields: string[] = [];
+  let statusCount = 0;
   try {
     for (const entry of p.entry ?? []) {
       for (const ch of (entry.changes ?? []) as Array<{
         field?: string;
-        value?: { messages?: RawInboundMsg[] };
+        value?: {
+          messages?: RawInboundMsg[];
+          statuses?: unknown[];
+        };
       }>) {
+        if (ch.field) fields.push(String(ch.field));
+        statusCount += ch.value?.statuses?.length ?? 0;
         for (const m of ch.value?.messages ?? []) {
           types.push(String(m.type ?? "?"));
         }
@@ -69,8 +89,20 @@ function logUnparsedWhatsAppMessages(payload: unknown) {
     }
     if (types.length > 0) {
       console.info(
-        "[whatsapp webhook] ignored or unparsed message type(s):",
+        "[whatsapp webhook] message type(s) present but no extractable user text:",
         types.join(", "),
+      );
+    } else if (statusCount > 0) {
+      console.info(
+        "[whatsapp webhook] delivery/status update only (no user messages). fields:",
+        fields.join(", ") || "(none)",
+        "statuses:",
+        statusCount,
+      );
+    } else {
+      console.info(
+        "[whatsapp webhook] no user messages in payload. change fields:",
+        fields.join(", ") || "(none)",
       );
     }
   } catch {
