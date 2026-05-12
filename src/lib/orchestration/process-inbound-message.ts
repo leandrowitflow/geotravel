@@ -549,30 +549,50 @@ export async function processInboundMessaging(input: {
     freshStateRes.data?.orchestration_state ?? caseRow.orchestrationState,
   );
 
+  /** Fallback when no scripted branch sent this turn (e.g. awaiting_d1). Must not depend on WHATSAPP_AI_CONVERSATION — that flag only gates GPT polish, not whether we reply at all. */
   if (
     input.channel === "whatsapp" &&
-    whatsappConversationFeaturesEnabled() &&
     !outboundThisTurn &&
     orchestrationNow !== "closed" &&
     orchestrationNow !== "cancelled"
   ) {
     let msg: string;
-    try {
-      msg =
-        (await generateWhatsappCatchAllReply({
-          userMessage: input.body,
-          language: convLang,
-          orchestrationState: orchestrationNow,
-          transcript: await loadTranscript(),
-          reservationSummary: reservationBlurb(),
-          bookingRef: reservation.externalBookingId,
-          passengerName: reservation.customerName,
-        })) ?? cannedWhatsappCatchAllReply(convLang);
-    } catch (e) {
-      console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);
+    const useAiCatchAll =
+      whatsappConversationFeaturesEnabled() && Boolean(process.env.OPENAI_API_KEY);
+    if (useAiCatchAll) {
+      try {
+        msg =
+          (await generateWhatsappCatchAllReply({
+            userMessage: input.body,
+            language: convLang,
+            orchestrationState: orchestrationNow,
+            transcript: await loadTranscript(),
+            reservationSummary: reservationBlurb(),
+            bookingRef: reservation.externalBookingId,
+            passengerName: reservation.customerName,
+          })) ?? cannedWhatsappCatchAllReply(convLang);
+      } catch (e) {
+        console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);
+        msg = cannedWhatsappCatchAllReply(convLang);
+      }
+    } else {
       msg = cannedWhatsappCatchAllReply(convLang);
     }
     await deliverOutbound(msg, { skipNaturalize: true });
+  }
+
+  if (input.channel === "whatsapp" && !outboundThisTurn) {
+    const snap = await sb
+      .from("cases")
+      .select("orchestration_state, case_status")
+      .eq("id", caseRow.id)
+      .maybeSingle();
+    console.info("[processInboundMessaging] whatsapp inbound finished with no outbound", {
+      caseId: caseRow.id,
+      orchestrationState: snap.data?.orchestration_state,
+      caseStatus: snap.data?.case_status,
+      excerpt: input.body.slice(0, 80),
+    });
   }
 
   return { ok: true };

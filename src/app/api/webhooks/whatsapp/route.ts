@@ -1,8 +1,12 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { processInboundMessaging } from "@/lib/orchestration/process-inbound-message";
 
-/** Inbound runs several OpenAI calls; default Vercel limit is too low and aborts before WhatsApp reply. */
+/**
+ * Extend allowed wall-clock time so the background pipeline (after()) has room.
+ * Hobby plan ignores values >10 — upgrade to Pro for reliable AI replies.
+ * The response itself goes back to Meta in <100 ms regardless of this value.
+ */
 export const maxDuration = 60;
 
 export async function GET(req: Request) {
@@ -42,6 +46,9 @@ type RawInboundMsg = {
     button_reply?: { id?: string; title?: string };
     list_reply?: { id?: string; title?: string };
   };
+  image?: { caption?: string };
+  video?: { caption?: string };
+  document?: { caption?: string; filename?: string };
 };
 
 function inboundBodyFromMessage(m: RawInboundMsg): string | null {
@@ -53,11 +60,22 @@ function inboundBodyFromMessage(m: RawInboundMsg): string | null {
     null;
   if (quickTap) return quickTap;
   const ir = m.interactive;
-  if (!ir) return null;
-  const btn = ir.button_reply?.title?.trim();
-  if (btn) return btn;
-  const list = ir.list_reply?.title?.trim();
-  if (list) return list;
+  if (ir) {
+    const btn = ir.button_reply?.title?.trim();
+    if (btn) return btn;
+    const list = ir.list_reply?.title?.trim();
+    if (list) return list;
+  }
+  const mediaCaption =
+    m.image?.caption?.trim() ||
+    m.video?.caption?.trim() ||
+    m.document?.caption?.trim() ||
+    null;
+  if (mediaCaption) return mediaCaption;
+  const t = (m.type ?? "").toLowerCase();
+  if (t === "image" || t === "video" || t === "document" || t === "sticker") {
+    return "(Customer sent a media message.)";
+  }
   return null;
 }
 
@@ -149,10 +167,12 @@ function extractFirstInboundUserText(payload: unknown): {
 export async function POST(req: Request) {
   const raw = await req.text();
   const sig = req.headers.get("x-hub-signature-256");
+
   if (process.env.WHATSAPP_APP_SECRET && !verifyMetaSignature(raw, sig)) {
     console.warn("[whatsapp webhook] invalid_signature (check WHATSAPP_APP_SECRET matches Meta app)");
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
+
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -166,22 +186,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  try {
-    const result = await processInboundMessaging({
-      channel: "whatsapp",
-      fromE164: inbound.fromE164,
-      body: inbound.body,
-      providerMessageId: inbound.providerMessageId,
-    });
-    if (!result.ok) {
-      console.warn("[whatsapp webhook] inbound not stored:", result.error, {
+  /**
+   * Return 200 to Meta immediately — Meta considers the webhook delivered and
+   * will NOT retry. The AI pipeline (language detection, OpenAI, WhatsApp send)
+   * runs in the background via after(), keeping the function alive past the
+   * response without blocking Meta's acknowledgement window.
+   */
+  after(async () => {
+    try {
+      const result = await processInboundMessaging({
+        channel: "whatsapp",
         fromE164: inbound.fromE164,
+        body: inbound.body,
+        providerMessageId: inbound.providerMessageId,
       });
+      if (!result.ok) {
+        console.warn("[whatsapp webhook] inbound not stored:", result.error, {
+          fromE164: inbound.fromE164,
+        });
+      }
+    } catch (e) {
+      console.error("[whatsapp webhook] processInboundMessaging failed:", e);
     }
-  } catch (e) {
-    console.error("[whatsapp webhook] processInboundMessaging failed:", e);
-    return NextResponse.json({ error: "processing_failed" }, { status: 500 });
-  }
+  });
 
   return NextResponse.json({ ok: true });
 }
