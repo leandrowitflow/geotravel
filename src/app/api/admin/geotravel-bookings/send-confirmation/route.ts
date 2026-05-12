@@ -185,6 +185,17 @@ export async function POST(req: Request) {
                           "Debug the token: https://developers.facebook.com/tools/debug/accesstoken/",
                         ].join(" ");
                       }
+                      const is190 =
+                        /\bcode=190\b|OAuthException.*\b190\b|\b190\b.*OAuthException/i.test(
+                          err,
+                        ) || /Invalid OAuth|Session has expired|access token/i.test(err);
+                      if (is190) {
+                        return [
+                          "Meta error 190 (OAuthException): WHATSAPP_ACCESS_TOKEN is invalid, expired, or revoked — Meta rejects the request before template name/language matter.",
+                          "Fix: generate a new token in Meta (prefer a System User permanent token for the WhatsApp app), paste it into WHATSAPP_ACCESS_TOKEN (Vercel Production / Preview as needed), redeploy.",
+                          "Verify: https://developers.facebook.com/tools/debug/accesstoken/ — look for expiry and app/WABA alignment.",
+                        ].join(" ");
+                      }
                       return `${!isWhatsappSmsFallbackEnabled() ? "[SMS fallback off] " : ""}Check WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME / WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE and token (WHATSAPP_ACCESS_TOKEN). Set WHATSAPP_SMS_FALLBACK_AFTER_FAILURE=true to retry failed WhatsApp via SMS.`;
                     })()
                   : "WhatsApp may reject free-form text outside the 24h window; set WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME to an approved template or use GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1."
