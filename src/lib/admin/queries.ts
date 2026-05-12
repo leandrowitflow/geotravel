@@ -74,8 +74,14 @@ export async function listBookings(opts?: {
   });
 }
 
+export type CaseWithReservationAndLastMessage = {
+  case: CaseRow;
+  reservation: ReservationRow;
+  lastMessage: MessageRow | null;
+};
+
 export async function listCasesWithReservation(): Promise<
-  { case: CaseRow; reservation: ReservationRow }[]
+  CaseWithReservationAndLastMessage[]
 > {
   const sb = serviceSupabase();
   const caseRows = takeRows<Record<string, unknown>>(
@@ -93,10 +99,39 @@ export async function listCasesWithReservation(): Promise<
     await sb.from("reservations").select("*").in("id", resIds),
   );
   const byId = new Map(resRows.map((r) => [String(r.id), mapReservation(r)]));
-  const out: { case: CaseRow; reservation: ReservationRow }[] = [];
+
+  const caseIds = caseRows.map((c) => String(c.id));
+  const lastByCaseId = new Map<string, MessageRow>();
+  if (caseIds.length > 0) {
+    const cap = Math.min(caseIds.length * 10, 1000);
+    const msgRaw = takeRows<Record<string, unknown>>(
+      "recent messages for case list",
+      await sb
+        .from("messages")
+        .select("*")
+        .in("case_id", caseIds)
+        .order("created_at", { ascending: false })
+        .limit(cap),
+    );
+    for (const row of msgRaw) {
+      const cid = String(row.case_id);
+      if (!lastByCaseId.has(cid)) {
+        lastByCaseId.set(cid, mapMessage(row) as MessageRow);
+      }
+    }
+  }
+
+  const out: CaseWithReservationAndLastMessage[] = [];
   for (const c of caseRows) {
     const res = byId.get(String(c.reservation_id));
-    if (res) out.push({ case: mapCase(c), reservation: res });
+    if (res) {
+      const mapped = mapCase(c);
+      out.push({
+        case: mapped,
+        reservation: res,
+        lastMessage: lastByCaseId.get(String(c.id)) ?? null,
+      });
+    }
   }
   return out;
 }
@@ -123,8 +158,8 @@ export async function getCaseDetail(caseId: string) {
       .from("messages")
       .select("*")
       .eq("case_id", caseId)
-      .order("created_at", { ascending: false })
-      .limit(100),
+      .order("created_at", { ascending: true })
+      .limit(200),
   );
   const evRows = takeRows<Record<string, unknown>>(
     "events",

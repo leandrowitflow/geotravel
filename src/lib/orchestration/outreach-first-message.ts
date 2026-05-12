@@ -1,11 +1,5 @@
 import type { SupportedLanguage } from "@/lib/contracts/extraction";
-
-function firstNameOrNull(customerName: string | null | undefined): string | null {
-  const t = (customerName ?? "").trim();
-  if (!t) return null;
-  const first = t.split(/\s+/)[0];
-  return first.length > 0 ? first : null;
-}
+import { firstNameFromDisplayName } from "@/lib/passenger/first-name";
 
 function coerceOutreachLang(raw: string | null | undefined): SupportedLanguage {
   const x = (raw ?? "en").toLowerCase().slice(0, 2);
@@ -69,7 +63,7 @@ export function buildInitialOutreachMessage(input: {
   contactPreferredLanguage: string | null | undefined;
 }): string {
   const lang = coerceOutreachLang(input.contactPreferredLanguage);
-  const first = firstNameOrNull(input.customerName);
+  const first = firstNameFromDisplayName(input.customerName);
   const trip = formatTripSummary({
     pickupLocation: input.pickupLocation,
     dropoffLocation: input.dropoffLocation,

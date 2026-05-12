@@ -34,6 +34,13 @@ export function SendGeotravelWhatsAppButton({
         hint?: string;
         caseId?: string;
         channel?: "whatsapp" | "sms";
+        templateUsed?: boolean;
+        templateName?: string;
+        templateLanguageSent?: string;
+        firstNameUsed?: string;
+        whatsappFallbackToSms?: boolean;
+        whatsappAttemptError?: string;
+        whatsappRecoveryHint?: string;
         destinationE164?: string;
         smsProviderMeta?: { destinationDigits?: string; status?: string };
       };
@@ -48,7 +55,9 @@ export function SendGeotravelWhatsAppButton({
         j.channel === "sms"
           ? "SMS"
           : j.channel === "whatsapp"
-            ? "WhatsApp"
+            ? j.templateUsed
+              ? "WhatsApp (Meta template)"
+              : "WhatsApp"
             : "Message";
       const dest = j.destinationE164 ?? "";
       const ibTo = j.smsProviderMeta?.destinationDigits;
@@ -58,12 +67,24 @@ export function SendGeotravelWhatsAppButton({
         j.channel === "sms" && ibTo && ibTo !== destDigits
           ? ` Infobip echoed ${ibTo} (expected ${destDigits}).`
           : "";
+      const waFail =
+        j.whatsappFallbackToSms && j.whatsappAttemptError
+          ? ` WhatsApp failed: ${j.whatsappAttemptError}`
+          : "";
+      const recovery = j.whatsappRecoveryHint ? ` ${j.whatsappRecoveryHint}` : "";
+      const namePreview =
+        j.templateUsed && j.firstNameUsed != null
+          ? ` first_name=${j.firstNameUsed}.`
+          : "";
       setMsg({
         tone: "ok",
         text: [
           `Sent via ${via} to ${dest || "?"}.`,
+          namePreview.trim() || null,
           j.channel === "sms" && ibSt ? `Provider: ${ibSt}.` : null,
           j.channel === "sms" ? mismatch.trim() || null : null,
+          waFail.trim() || null,
+          recovery.trim() || null,
           "Case updated.",
         ]
           .filter(Boolean)

@@ -43,6 +43,18 @@ export async function sendWhatsAppMessage(
   const vars = msg.templateVariables;
   const hasVars = vars && Object.keys(vars).length > 0;
 
+  /** Named body vars (e.g. {{first_name}}) need `parameter_name`; positional {{1}} uses text only. */
+  function bodyParameters(
+    v: Record<string, string>,
+  ): Array<{ type: "text"; text: string; parameter_name?: string }> {
+    return Object.entries(v).map(([key, text]) => {
+      const positional = /^\d+$/.test(key);
+      return positional
+        ? { type: "text" as const, text }
+        : { type: "text" as const, text, parameter_name: key };
+    });
+  }
+
   const body = msg.templateName
     ? {
         messaging_product: "whatsapp",
@@ -56,10 +68,7 @@ export async function sendWhatsAppMessage(
               components: [
                 {
                   type: "body" as const,
-                  parameters: Object.values(vars!).map((text) => ({
-                    type: "text" as const,
-                    text,
-                  })),
+                  parameters: bodyParameters(vars!),
                 },
               ],
             }
@@ -93,7 +102,13 @@ export async function sendWhatsAppMessage(
     });
     const json = (await res.json()) as {
       messages?: { id: string }[];
-      error?: { message: string; code?: number };
+      error?: {
+        message: string;
+        code?: number;
+        error_subcode?: number;
+        type?: string;
+        fbtrace_id?: string;
+      };
     };
 
     if (res.ok) {
@@ -105,7 +120,14 @@ export async function sendWhatsAppMessage(
     }
 
     const code = json.error?.code;
-    const msgText = json.error?.message ?? `whatsapp_http_${res.status}`;
+    const sub = json.error?.error_subcode;
+    const typ = json.error?.type?.trim();
+    const baseMsg = json.error?.message ?? `whatsapp_http_${res.status}`;
+    const parts = [baseMsg];
+    if (typ) parts.push(`type=${typ}`);
+    if (code != null) parts.push(`code=${code}`);
+    if (sub != null) parts.push(`subcode=${sub}`);
+    const msgText = parts.join(" · ");
     lastErr = msgText;
 
     if (

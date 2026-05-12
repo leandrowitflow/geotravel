@@ -9,7 +9,7 @@ const FIELD_ORDER = [
   "additional_notes",
 ] as const;
 
-type FieldKey = (typeof FIELD_ORDER)[number];
+export type FieldKey = (typeof FIELD_ORDER)[number];
 
 const COPY: Record<
   FieldKey,

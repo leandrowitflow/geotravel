@@ -4,12 +4,17 @@ import { assertNoError } from "@/db/supabase-helpers";
 import { requireStaff } from "@/lib/auth/require-staff";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import {
+  buildBookingWelcomeTemplateBody,
   buildGeotravelWhatsAppConfirmationMessage,
   isBookingEligibleForWhatsAppConfirmation,
   WHATSAPP_PILOT_PHONE_DIGITS,
 } from "@/lib/geotravel/geotravel-confirmation-message";
 import { ensureReservationCaseFromGeotravel } from "@/lib/geotravel/sync-geotravel-booking-to-case";
-import { sendViaPreferredChannel } from "@/lib/messaging/send-via-channel";
+import { resolveBookingTemplateFirstName } from "@/lib/geotravel/resolve-booking-template-first-name";
+import {
+  isWhatsappSmsFallbackEnabled,
+  sendViaPreferredChannel,
+} from "@/lib/messaging/send-via-channel";
 import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 import {
   assertTransition,
@@ -99,7 +104,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `sync_failed:${msg}` }, { status: 500 });
   }
 
-  const bodyText = buildGeotravelWhatsAppConfirmationMessage(booking);
+  const longBodyText = buildGeotravelWhatsAppConfirmationMessage(booking);
   const to = normalizeGeotravelPhoneToE164(booking.passenger_phone, {
     defaultCountryCode: "351",
   });
@@ -107,19 +112,40 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "no_phone" }, { status: 400 });
   }
 
-  /** Meta may return 200 while the customer sees nothing; SMS fallback only runs on API error. Set GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1 to use Infobip for this action until templates/session work. */
-  const preferred: "whatsapp" | "sms" = envTruthy(
-    "GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS",
-  )
+  const templateName = process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim();
+
+  /**
+   * Meta matches (template name, language code) exactly — "English" in the UI is often `en` or `en_US`, not interchangeable.
+   * Default `en` avoids inheriting pt_PT from WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE. Override if Manager shows another code.
+   */
+  const templateLanguageCode =
+    process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE?.trim() || "en";
+
+  /** Prefer Meta when a template is configured; else use case channel. Force SMS skips WhatsApp entirely. */
+  const forceSms = envTruthy("GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS");
+  const preferred: "whatsapp" | "sms" = forceSms
     ? "sms"
-    : (ctx.currentChannel as "whatsapp" | "sms");
+    : templateName
+      ? "whatsapp"
+      : (ctx.currentChannel as "whatsapp" | "sms");
+
+  const firstName = await resolveBookingTemplateFirstName(
+    serviceSupabase(),
+    ctx.reservationPk,
+    booking,
+  );
+  const welcomeBody = buildBookingWelcomeTemplateBody(firstName);
+  const useWaTemplate = preferred === "whatsapp" && Boolean(templateName);
 
   const send = await sendViaPreferredChannel({
     caseId: ctx.caseId,
     reservationId: ctx.reservationPk,
     preferred,
     toE164: to,
-    body: bodyText,
+    body: useWaTemplate ? welcomeBody : longBodyText,
+    templateName: useWaTemplate ? templateName : undefined,
+    templateVariables: useWaTemplate ? { first_name: firstName } : undefined,
+    templateLanguageCode,
   });
 
   if (!send.ok) {
@@ -137,12 +163,33 @@ export async function POST(req: Request) {
                 : send.error.startsWith("infobip_sms_rejected:")
                   ? "Infobip rejected the SMS — open Infobip logs for the full reason."
                   : preferred === "whatsapp"
-                ? "WhatsApp may reject free-form text outside the 24h window; user should message you first or use a template. Or set GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1 to send via Infobip."
+                ? templateName
+                  ? (() => {
+                      const is132001 = /132001|does not exist in the translation/i.test(
+                        send.error ?? "",
+                      );
+                      if (is132001) {
+                        return `Error 132001: Meta has no translation for template "${templateName}" + language "${templateLanguageCode}". Copy the exact language code from WhatsApp Manager (often en or en_US for English). Set WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE — this app defaults to en when unset.`;
+                      }
+                      return `${!isWhatsappSmsFallbackEnabled() ? "[SMS fallback off] " : ""}Check WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME / WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE and token (WHATSAPP_ACCESS_TOKEN). Set WHATSAPP_SMS_FALLBACK_AFTER_FAILURE=true to retry failed WhatsApp via SMS.`;
+                    })()
+                  : "WhatsApp may reject free-form text outside the 24h window; set WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME to an approved template or use GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS=1."
                 : undefined,
+        ...(templateName
+          ? {
+              templateNameAttempted: templateName,
+              templateLanguageSent: templateLanguageCode,
+            }
+          : {}),
       },
       { status: 502 },
     );
   }
+
+  const messageBodyForStore =
+    send.ok && send.channel === "whatsapp" && useWaTemplate && templateName
+      ? `[WhatsApp template: ${templateName}]\n${welcomeBody}`
+      : longBodyText;
 
   assertNoError(
     "geotravel whatsapp insert message",
@@ -150,7 +197,7 @@ export async function POST(req: Request) {
       case_id: ctx.caseId,
       direction: "outbound",
       channel: send.channel,
-      body: bodyText,
+      body: messageBodyForStore,
       provider_message_id: send.providerMessageId,
       status: "sent",
     }),
@@ -180,7 +227,19 @@ export async function POST(req: Request) {
     caseId: ctx.caseId,
     channel: send.channel,
     providerMessageId: send.providerMessageId,
-    /** E.164 we used (after PT national normalization). Compare with Infobip logs. */
+    templateUsed: useWaTemplate,
+    templateName: useWaTemplate ? templateName : undefined,
+    templateLanguageSent: useWaTemplate ? templateLanguageCode : undefined,
+    firstNameUsed: useWaTemplate ? firstName : undefined,
+    whatsappFallbackToSms: Boolean(send.whatsappErrorBeforeSmsFallback),
+    whatsappAttemptError: send.whatsappErrorBeforeSmsFallback,
+    whatsappRecoveryHint:
+      send.whatsappErrorBeforeSmsFallback &&
+      /auth|token|OAuth|session has expired|expired|invalid.*access|code=190/i.test(
+        send.whatsappErrorBeforeSmsFallback,
+      )
+        ? "Regenerate WHATSAPP_ACCESS_TOKEN (Meta → App → WhatsApp → API setup). Match WHATSAPP_PHONE_NUMBER_ID to that app; restart next dev."
+        : undefined,
     destinationE164: to,
     smsProviderMeta:
       send.ok && send.channel === "sms" ? send.smsProviderMeta : undefined,

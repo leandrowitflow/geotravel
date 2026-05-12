@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeleteAllCasesButton } from "@/components/admin/delete-all-cases-button";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { listCasesWithReservation } from "@/lib/admin/queries";
 
@@ -24,6 +25,12 @@ function Badge({
   );
 }
 
+function excerpt(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
 export default async function CasesInboxPage() {
   const rows = await listCasesWithReservation();
   return (
@@ -34,15 +41,23 @@ export default async function CasesInboxPage() {
             Case inbox
           </h1>
           <p className="text-sm text-stone-600 dark:text-stone-400">
-            Operational cases and enrichment status.
+            Latest message is the newest row in the thread. Open a case for the full conversation (anchor{" "}
+            <code className="rounded bg-stone-100 px-1 text-xs dark:bg-stone-800">#messages</code>
+            ). Failed sends appear as{" "}
+            <code className="rounded bg-stone-100 px-1 text-xs dark:bg-stone-800">outbound_send_failed</code>{" "}
+            under Behavioural events.
           </p>
         </div>
-        <RefreshDataButton />
+        <div className="flex flex-wrap items-center gap-2">
+          <DeleteAllCasesButton />
+          <RefreshDataButton />
+        </div>
       </div>
       <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-stone-200 bg-stone-50 text-stone-600 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300">
             <tr>
+              <th className="px-3 py-2 font-medium">Latest message</th>
               <th className="px-3 py-2 font-medium">Case</th>
               <th className="px-3 py-2 font-medium">Booking</th>
               <th className="px-3 py-2 font-medium">Customer</th>
@@ -55,14 +70,35 @@ export default async function CasesInboxPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ case: c, reservation: r }) => (
+            {rows.map(({ case: c, reservation: r, lastMessage: lm }) => (
               <tr
                 key={c.id}
                 className="border-b border-stone-100 hover:bg-stone-50/80 dark:border-stone-800 dark:hover:bg-stone-800/50"
               >
+                <td className="max-w-[14rem] px-3 py-2 text-xs text-stone-600 dark:text-stone-300">
+                  {lm ? (
+                    <Link
+                      href={`/admin/cases/${c.id}#messages`}
+                      className="block text-teal-800 underline decoration-teal-600/40 underline-offset-2 hover:decoration-teal-600 dark:text-teal-300"
+                      title={lm.body}
+                    >
+                      <span className="font-medium text-stone-700 dark:text-stone-200">
+                        {lm.direction}
+                      </span>{" "}
+                      <span className="text-stone-500 dark:text-stone-400">
+                        {lm.createdAt.toISOString().slice(5, 16).replace("T", " ")}
+                      </span>
+                      <span className="mt-0.5 block font-normal text-stone-600 dark:text-stone-400">
+                        {excerpt(lm.body, 72)}
+                      </span>
+                    </Link>
+                  ) : (
+                    <span className="text-stone-400">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   <Link
-                    href={`/admin/cases/${c.id}`}
+                    href={`/admin/cases/${c.id}#messages`}
                     className="text-teal-800 underline dark:text-teal-300"
                   >
                     {c.id.slice(0, 8)}…
