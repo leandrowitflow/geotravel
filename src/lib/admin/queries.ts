@@ -78,6 +78,7 @@ export type CaseWithReservationAndLastMessage = {
   case: CaseRow;
   reservation: ReservationRow;
   lastMessage: MessageRow | null;
+  messageCount: number;
 };
 
 export async function listCasesWithReservation(): Promise<
@@ -102,6 +103,7 @@ export async function listCasesWithReservation(): Promise<
 
   const caseIds = caseRows.map((c) => String(c.id));
   const lastByCaseId = new Map<string, MessageRow>();
+  const messageCountByCaseId = new Map<string, number>();
   if (caseIds.length > 0) {
     const cap = Math.min(caseIds.length * 10, 1000);
     const msgRaw = takeRows<Record<string, unknown>>(
@@ -119,6 +121,15 @@ export async function listCasesWithReservation(): Promise<
         lastByCaseId.set(cid, mapMessage(row) as MessageRow);
       }
     }
+
+    const countRows = takeRows<{ case_id: string }>(
+      "message counts for case list",
+      await sb.from("messages").select("case_id").in("case_id", caseIds),
+    );
+    for (const row of countRows) {
+      const cid = String(row.case_id);
+      messageCountByCaseId.set(cid, (messageCountByCaseId.get(cid) ?? 0) + 1);
+    }
   }
 
   const out: CaseWithReservationAndLastMessage[] = [];
@@ -126,10 +137,12 @@ export async function listCasesWithReservation(): Promise<
     const res = byId.get(String(c.reservation_id));
     if (res) {
       const mapped = mapCase(c);
+      const cid = String(c.id);
       out.push({
         case: mapped,
         reservation: res,
-        lastMessage: lastByCaseId.get(String(c.id)) ?? null,
+        lastMessage: lastByCaseId.get(cid) ?? null,
+        messageCount: messageCountByCaseId.get(cid) ?? 0,
       });
     }
   }
@@ -190,72 +203,62 @@ export async function getCaseDetail(caseId: string) {
 
 export async function getQualityStats() {
   const sb = serviceSupabase();
-  const countHead = async (
-    label: string,
-    promise: PromiseLike<{ error: { message: string } | null; count: number | null }>,
-  ) => {
-    const { error, count } = await promise;
-    if (error) throw new Error(`${label}: ${error.message}`);
-    return count ?? 0;
-  };
-  const totalCases = await countHead(
-    "count cases",
-    sb.from("cases").select("*", { count: "exact", head: true }),
-  );
-  const enrichmentComplete = await countHead(
-    "count enrichment complete",
-    sb
-      .from("cases")
-      .select("*", { count: "exact", head: true })
-      .eq("enrichment_status", "complete"),
-  );
-  const d1Confirmed = await countHead(
-    "count d1 confirmed",
-    sb
-      .from("cases")
-      .select("*", { count: "exact", head: true })
-      .eq("confirmation_status", "confirmed"),
-  );
-  const human = await countHead(
-    "count human intervention",
-    sb
-      .from("cases")
-      .select("*", { count: "exact", head: true })
-      .eq("human_intervention", true),
-  );
-  const smsFallback = await countHead(
-    "count sms fallback",
-    sb
-      .from("behavioural_events")
-      .select("*", { count: "exact", head: true })
-      .eq("event_type", "fallback_sms_triggered"),
-  );
-  const lowConf = await countHead(
-    "count low confidence",
-    sb
-      .from("behavioural_events")
-      .select("*", { count: "exact", head: true })
-      .eq("event_type", "extraction_low_confidence"),
-  );
   const { data: msgData, error: msgErr } = await sb
     .from("messages")
-    .select("channel");
-  if (msgErr) throw new Error(`messages channel: ${msgErr.message}`);
-  const byChannelMap = new Map<string, number>();
+    .select("channel, direction, case_id");
+  if (msgErr) throw new Error(`messages: ${msgErr.message}`);
+
+  let outboundMessages = 0;
+  let messagesViaWhatsapp = 0;
+  let messagesViaSms = 0;
+  const contactedCases = new Set<string>();
+  const repliedCases = new Set<string>();
+  const casesWithWaOutbound = new Set<string>();
+  const casesWithSmsOutbound = new Set<string>();
+
   for (const row of msgData ?? []) {
-    const ch = String((row as { channel: string }).channel);
-    byChannelMap.set(ch, (byChannelMap.get(ch) ?? 0) + 1);
+    const r = row as { channel: string; direction: string; case_id: string };
+    const ch = String(r.channel).toLowerCase();
+    if (r.direction === "inbound") {
+      repliedCases.add(r.case_id);
+      continue;
+    }
+    if (r.direction !== "outbound") continue;
+
+    outboundMessages++;
+    contactedCases.add(r.case_id);
+    if (ch === "whatsapp") {
+      messagesViaWhatsapp++;
+      casesWithWaOutbound.add(r.case_id);
+    } else if (ch === "sms") {
+      messagesViaSms++;
+      casesWithSmsOutbound.add(r.case_id);
+    }
   }
-  const messagesByChannel = [...byChannelMap.entries()].map(
-    ([channel, n]) => ({ channel, n }),
-  );
+
+  const clientsContacted = contactedCases.size;
+
+  let clientsBothChannels = 0;
+  for (const id of casesWithWaOutbound) {
+    if (casesWithSmsOutbound.has(id)) clientsBothChannels++;
+  }
+  const clientsWhatsappOnly = casesWithWaOutbound.size - clientsBothChannels;
+  const clientsSmsOnly = casesWithSmsOutbound.size - clientsBothChannels;
+  const clientsWaOrSms = clientsWhatsappOnly + clientsSmsOnly + clientsBothChannels;
+  const clientsOtherOutbound = Math.max(0, clientsContacted - clientsWaOrSms);
+
   return {
-    totalCases,
-    enrichmentComplete,
-    d1Confirmed,
-    humanIntervention: human,
-    smsFallbackEvents: smsFallback,
-    lowConfidenceEvents: lowConf,
-    messagesByChannel,
+    outboundMessages,
+    messagesViaWhatsapp,
+    messagesViaSms,
+    clientsContacted,
+    clientsReplied: repliedCases.size,
+    /** Disjoint partition of contacted clients (sums to clientsContacted). */
+    channelClientMix: {
+      whatsappOnly: clientsWhatsappOnly,
+      smsOnly: clientsSmsOnly,
+      both: clientsBothChannels,
+      otherOutbound: clientsOtherOutbound,
+    },
   };
 }

@@ -165,22 +165,18 @@ function extractFirstInboundUserText(payload: unknown): {
 }
 
 export async function POST(req: Request) {
-  console.log("[WA webhook] ① POST received");
-
   const raw = await req.text();
   const sig = req.headers.get("x-hub-signature-256");
 
   if (process.env.WHATSAPP_APP_SECRET && !verifyMetaSignature(raw, sig)) {
-    console.warn("[WA webhook] ✗ invalid_signature — check WHATSAPP_APP_SECRET matches Meta app secret");
+    console.warn("[whatsapp webhook] invalid_signature — check WHATSAPP_APP_SECRET matches Meta app secret");
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
-  console.log("[WA webhook] ② signature OK (or secret not set)");
 
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
   } catch {
-    console.warn("[WA webhook] ✗ invalid JSON body");
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
@@ -190,20 +186,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  console.log("[WA webhook] ③ inbound message extracted", {
-    fromE164: inbound.fromE164,
-    bodyExcerpt: inbound.body.slice(0, 80),
-    providerMessageId: inbound.providerMessageId,
-  });
-
-  /**
-   * Return 200 to Meta immediately — Meta considers the webhook delivered and
-   * will NOT retry. The AI pipeline (language detection, OpenAI, WhatsApp send)
-   * runs in the background via after(), keeping the function alive past the
-   * response without blocking Meta's acknowledgement window.
-   */
   after(async () => {
-    console.log("[WA webhook] ④ background pipeline starting");
     try {
       const result = await processInboundMessaging({
         channel: "whatsapp",
@@ -212,17 +195,12 @@ export async function POST(req: Request) {
         providerMessageId: inbound.providerMessageId,
       });
       if (!result.ok) {
-        console.warn("[WA webhook] ⑧ pipeline finished — inbound NOT stored:", result.error, {
-          fromE164: inbound.fromE164,
-        });
-      } else {
-        console.log("[WA webhook] ⑧ pipeline finished OK");
+        console.warn("[whatsapp webhook] inbound not stored:", result.error, { fromE164: inbound.fromE164 });
       }
     } catch (e) {
-      console.error("[WA webhook] ✗ pipeline threw unexpectedly:", e);
+      console.error("[whatsapp webhook] processInboundMessaging failed:", e);
     }
   });
 
-  console.log("[WA webhook] → returning 200 to Meta now");
   return NextResponse.json({ ok: true });
 }

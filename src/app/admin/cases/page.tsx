@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { DeleteAllCasesButton } from "@/components/admin/delete-all-cases-button";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
+import { inboxStageFromOrchestration } from "@/lib/admin/inbox-stage";
 import { listCasesWithReservation } from "@/lib/admin/queries";
 
 function Badge({
@@ -41,11 +42,9 @@ export default async function CasesInboxPage() {
             Case inbox
           </h1>
           <p className="text-sm text-stone-600 dark:text-stone-400">
-            Latest message is the newest row in the thread. Open a case for the full conversation (anchor{" "}
+            Latest message preview; open a case for the full thread (
             <code className="rounded bg-stone-100 px-1 text-xs dark:bg-stone-800">#messages</code>
-            ). Failed sends appear as{" "}
-            <code className="rounded bg-stone-100 px-1 text-xs dark:bg-stone-800">outbound_send_failed</code>{" "}
-            under Behavioural events.
+            ).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -62,15 +61,15 @@ export default async function CasesInboxPage() {
               <th className="px-3 py-2 font-medium">Booking</th>
               <th className="px-3 py-2 font-medium">Customer</th>
               <th className="px-3 py-2 font-medium">Channel</th>
-              <th className="px-3 py-2 font-medium">State</th>
-              <th className="px-3 py-2 font-medium">Enrichment</th>
-              <th className="px-3 py-2 font-medium">D-1</th>
-              <th className="px-3 py-2 font-medium">Flags</th>
+              <th className="px-3 py-2 font-medium">Messages</th>
+              <th className="px-3 py-2 font-medium">Stage</th>
               <th className="px-3 py-2 font-medium">Updated</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ case: c, reservation: r, lastMessage: lm }) => (
+            {rows.map(({ case: c, reservation: r, lastMessage: lm, messageCount }) => {
+              const stage = inboxStageFromOrchestration(c.orchestrationState);
+              return (
               <tr
                 key={c.id}
                 className="border-b border-stone-100 hover:bg-stone-50/80 dark:border-stone-800 dark:hover:bg-stone-800/50"
@@ -110,36 +109,23 @@ export default async function CasesInboxPage() {
                 </td>
                 <td className="px-3 py-2">{r.customerName ?? "—"}</td>
                 <td className="px-3 py-2">{c.currentChannel}</td>
-                <td className="px-3 py-2">
-                  <Badge tone="neutral">{c.orchestrationState}</Badge>
-                </td>
-                <td className="px-3 py-2">
-                  <Badge
-                    tone={
-                      c.enrichmentStatus === "complete"
-                        ? "ok"
-                        : c.enrichmentStatus === "pending"
-                          ? "warn"
-                          : "neutral"
-                    }
+                <td className="px-3 py-2 tabular-nums text-stone-700 dark:text-stone-200">
+                  <Link
+                    href={`/admin/cases/${c.id}#messages`}
+                    className="text-teal-800 underline dark:text-teal-300"
                   >
-                    {c.enrichmentStatus}
-                  </Badge>
+                    {messageCount}
+                  </Link>
                 </td>
                 <td className="px-3 py-2">
-                  <Badge tone="neutral">{c.confirmationStatus}</Badge>
-                </td>
-                <td className="px-3 py-2">
-                  {c.exceptionFlag ? <Badge tone="bad">exception</Badge> : null}{" "}
-                  {c.humanIntervention ? (
-                    <Badge tone="warn">human</Badge>
-                  ) : null}
+                  <Badge tone={stage.tone}>{stage.label}</Badge>
                 </td>
                 <td className="px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
                   {c.updatedAt.toISOString().slice(0, 16).replace("T", " ")}
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
         {rows.length === 0 ? (
