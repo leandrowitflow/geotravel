@@ -165,11 +165,25 @@ export async function POST(req: Request) {
                   : preferred === "whatsapp"
                 ? templateName
                   ? (() => {
+                      const err = send.error ?? "";
                       const is132001 = /132001|does not exist in the translation/i.test(
-                        send.error ?? "",
+                        err,
                       );
                       if (is132001) {
                         return `Error 132001: Meta has no translation for template "${templateName}" + language "${templateLanguageCode}". Copy the exact language code from WhatsApp Manager (often en or en_US for English). Set WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE — this app defaults to en when unset.`;
+                      }
+                      const is131005 =
+                        /131005|OAuthException.*Access denied|Access denied/i.test(
+                          err,
+                        );
+                      if (is131005) {
+                        return [
+                          "Meta error 131005 (Access denied / OAuthException): the access token cannot send for this WhatsApp Business phone.",
+                          "Typical fixes: (1) Use a System User permanent token (or a valid long-lived token) with whatsapp_business_messaging and whatsapp_business_management.",
+                          "(2) In Business Settings, assign that System User to your WABA and to this phone number asset.",
+                          "(3) Confirm WHATSAPP_PHONE_NUMBER_ID in Vercel matches the number under the same Meta app as the token.",
+                          "Debug the token: https://developers.facebook.com/tools/debug/accesstoken/",
+                        ].join(" ");
                       }
                       return `${!isWhatsappSmsFallbackEnabled() ? "[SMS fallback off] " : ""}Check WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME / WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE and token (WHATSAPP_ACCESS_TOKEN). Set WHATSAPP_SMS_FALLBACK_AFTER_FAILURE=true to retry failed WhatsApp via SMS.`;
                     })()
