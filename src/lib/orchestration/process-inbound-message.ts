@@ -109,7 +109,13 @@ export async function processInboundMessaging(input: {
     return { ok: true };
   }
 
-  const langDet = await detectLanguageFromText(input.body);
+  let langDet: Awaited<ReturnType<typeof detectLanguageFromText>>;
+  try {
+    langDet = await detectLanguageFromText(input.body);
+  } catch (e) {
+    console.warn("[processInboundMessaging] detectLanguageFromText failed:", e);
+    langDet = { language: "en", confidence: 0.3 };
+  }
   const preferred =
     (contact.preferredLanguage as SupportedLanguage) || "en";
   const convLang = resolveConversationLanguage(langDet, preferred);
@@ -175,15 +181,22 @@ export async function processInboundMessaging(input: {
       whatsappConversationFeaturesEnabled() &&
       !opts?.skipNaturalize
     ) {
-      const n = await naturalizeWhatsappReply({
-        scriptedIntent: text,
-        userMessage: input.body,
-        transcript: await loadTranscript(),
-        language: convLang,
-        reservationSummary: reservationBlurb(),
-        passengerName: reservation.customerName,
-      });
-      if (n) out = n;
+      try {
+        const n = await naturalizeWhatsappReply({
+          scriptedIntent: text,
+          userMessage: input.body,
+          transcript: await loadTranscript(),
+          language: convLang,
+          reservationSummary: reservationBlurb(),
+          passengerName: reservation.customerName,
+        });
+        if (n) out = n;
+      } catch (e) {
+        console.warn(
+          "[processInboundMessaging] naturalizeWhatsappReply failed; sending scripted text:",
+          e,
+        );
+      }
     }
     await sendReply(caseRow, reservation, contact, out, input.channel);
   }
@@ -197,13 +210,18 @@ export async function processInboundMessaging(input: {
       ]
         .filter(Boolean)
         .join(" · ");
-      const aiText = await generateInboundAssistantReply({
-        userMessage: input.body,
-        language: convLang,
-        bookingRef: reservation.externalBookingId,
-        pickupSummary: pickupSummary || null,
-        passengerName: reservation.customerName,
-      });
+      let aiText: string | null = null;
+      try {
+        aiText = await generateInboundAssistantReply({
+          userMessage: input.body,
+          language: convLang,
+          bookingRef: reservation.externalBookingId,
+          pickupSummary: pickupSummary || null,
+          passengerName: reservation.customerName,
+        });
+      } catch (e) {
+        console.warn("[processInboundMessaging] generateInboundAssistantReply failed:", e);
+      }
       const reply = aiText ?? cannedNeedsHumanAck(convLang);
       await deliverOutbound(reply, { skipNaturalize: true });
     }
@@ -418,10 +436,16 @@ export async function processInboundMessaging(input: {
     }
 
     const collected = (caseRow.collectedData ?? {}) as CollectedDataJson;
-    const extraction = await extractOperationalFields({
-      customerMessage: input.body,
-      prior: collected as Record<string, unknown>,
-    });
+    let extraction: Awaited<ReturnType<typeof extractOperationalFields>>;
+    try {
+      extraction = await extractOperationalFields({
+        customerMessage: input.body,
+        prior: collected as Record<string, unknown>,
+      });
+    } catch (e) {
+      console.warn("[processInboundMessaging] extractOperationalFields failed:", e);
+      extraction = { confidence: {} };
+    }
     const merged = mergeExtraction(
       collected as Record<string, unknown>,
       extraction,
@@ -477,18 +501,22 @@ export async function processInboundMessaging(input: {
         whatsappConversationFeaturesEnabled() &&
         process.env.OPENAI_API_KEY
       ) {
-        const aiAsk = await generateWhatsappEnrichmentAsk({
-          fieldKey: missing,
-          scriptedQuestion: scripted,
-          userMessage: input.body,
-          transcript: await loadTranscript(),
-          language: convLang,
-          reservationSummary: reservationBlurb(),
-          passengerName: reservation.customerName,
-        });
-        if (aiAsk) {
-          replyBody = aiAsk;
-          skipNat = true;
+        try {
+          const aiAsk = await generateWhatsappEnrichmentAsk({
+            fieldKey: missing,
+            scriptedQuestion: scripted,
+            userMessage: input.body,
+            transcript: await loadTranscript(),
+            language: convLang,
+            reservationSummary: reservationBlurb(),
+            passengerName: reservation.customerName,
+          });
+          if (aiAsk) {
+            replyBody = aiAsk;
+            skipNat = true;
+          }
+        } catch (e) {
+          console.warn("[processInboundMessaging] generateWhatsappEnrichmentAsk failed:", e);
         }
       }
       await deliverOutbound(replyBody, { skipNaturalize: skipNat });
@@ -512,23 +540,38 @@ export async function processInboundMessaging(input: {
     return { ok: true };
   }
 
+  const freshStateRes = await sb
+    .from("cases")
+    .select("orchestration_state")
+    .eq("id", caseRow.id)
+    .maybeSingle();
+  const orchestrationNow = String(
+    freshStateRes.data?.orchestration_state ?? caseRow.orchestrationState,
+  );
+
   if (
     input.channel === "whatsapp" &&
     whatsappConversationFeaturesEnabled() &&
     !outboundThisTurn &&
-    caseRow.orchestrationState !== "closed" &&
-    caseRow.orchestrationState !== "cancelled"
+    orchestrationNow !== "closed" &&
+    orchestrationNow !== "cancelled"
   ) {
-    const msg =
-      (await generateWhatsappCatchAllReply({
-        userMessage: input.body,
-        language: convLang,
-        orchestrationState: caseRow.orchestrationState,
-        transcript: await loadTranscript(),
-        reservationSummary: reservationBlurb(),
-        bookingRef: reservation.externalBookingId,
-        passengerName: reservation.customerName,
-      })) ?? cannedWhatsappCatchAllReply(convLang);
+    let msg: string;
+    try {
+      msg =
+        (await generateWhatsappCatchAllReply({
+          userMessage: input.body,
+          language: convLang,
+          orchestrationState: orchestrationNow,
+          transcript: await loadTranscript(),
+          reservationSummary: reservationBlurb(),
+          bookingRef: reservation.externalBookingId,
+          passengerName: reservation.customerName,
+        })) ?? cannedWhatsappCatchAllReply(convLang);
+    } catch (e) {
+      console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);
+      msg = cannedWhatsappCatchAllReply(convLang);
+    }
     await deliverOutbound(msg, { skipNaturalize: true });
   }
 
