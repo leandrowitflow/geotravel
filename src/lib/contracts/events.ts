@@ -6,6 +6,7 @@ export const BEHAVIOURAL_EVENT_TYPES = [
   "outbound_message_sent",
   "outbound_message_delivered",
   "outbound_message_read",
+  "outbound_send_failed",
   "customer_replied",
   "language_detected",
   "field_requested",

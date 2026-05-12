@@ -46,6 +46,21 @@ function yesNoFooter(lang: SupportedLanguage): string {
   return "\n\nIs everything correct? Reply *YES* to confirm or *NO* if something is wrong.";
 }
 
+/** First token of passenger name for Meta template `{{first_name}}` (max 60 chars). */
+export function firstNameForBookingWelcomeTemplate(
+  passengerName: string | null | undefined,
+): string {
+  const t = passengerName?.trim();
+  if (!t) return "there";
+  const first = (t.split(/\s+/)[0] ?? t).slice(0, 60);
+  return first || "there";
+}
+
+/** Plain-text preview of the approved welcome template body (for DB + SMS fallback). */
+export function buildBookingWelcomeTemplateBody(firstName: string): string {
+  return `Hello ${firstName}, welcome to Geotravel. Thank you for reaching out. We're here to help with your transfer. If you have any questions, just reply to this message.`;
+}
+
 /**
  * First WhatsApp for a row from the Geotravel Data API: trip summary + enrichment
  * questions, plus an explicit binary confirmation (SIM/NÃO, etc.).

@@ -19,5 +19,7 @@ export type SendResult =
       channel: MessagingChannel;
       /** Infobip SMS: echoed destination and status when the API returns them. */
       smsProviderMeta?: { destinationDigits?: string; status?: string };
+      /** WhatsApp failed first; SMS fallback succeeded — Meta error text for debugging. */
+      whatsappErrorBeforeSmsFallback?: string;
     }
   | { ok: false; error: string };
