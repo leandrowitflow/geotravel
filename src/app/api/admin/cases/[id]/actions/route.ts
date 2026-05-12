@@ -8,24 +8,17 @@ import { buildCrmEnrichmentPayload } from "@/lib/crm/enrichment-payload";
 import { syncEnrichmentToCrm } from "@/lib/crm/sync-with-retry";
 import { writeBehaviouralEvent } from "@/lib/events/write-behavioural-event";
 import { sendViaPreferredChannel } from "@/lib/messaging/send-via-channel";
-import { processInboundMessaging } from "@/lib/orchestration/process-inbound-message";
 import { serviceSupabase } from "@/lib/supabase/service-role";
 
-const bodySchema = z.union([
-  z.object({
-    action: z.enum([
-      "resend",
-      "force_sms",
-      "retry_crm",
-      "needs_human",
-      "close_case",
-    ]),
-  }),
-  z.object({
-    action: z.literal("simulate_inbound"),
-    body: z.string().min(1).max(4000),
-  }),
-]);
+const bodySchema = z.object({
+  action: z.enum([
+    "resend",
+    "force_sms",
+    "retry_crm",
+    "needs_human",
+    "close_case",
+  ]),
+});
 
 function normalizeToE164(phone: string | null | undefined): string | null {
   if (!phone) return null;
@@ -74,39 +67,6 @@ export async function POST(
   const resv = mapReservation(resvRes.data as Record<string, unknown>);
 
   switch (parsed.data.action) {
-    case "simulate_inbound": {
-      const contactRows = takeRows<Record<string, unknown>>(
-        "simulate contact",
-        await sb
-          .from("contacts")
-          .select("phone")
-          .eq("reservation_id", resv.id)
-          .order("created_at", { ascending: false })
-          .limit(1),
-      );
-      const rawPhone =
-        (contactRows[0]?.phone as string | null) ?? resv.sourcePhone;
-      if (!rawPhone) {
-        return NextResponse.json({ error: "no_phone" }, { status: 400 });
-      }
-      const digits = rawPhone.replace(/\D/g, "");
-      if (digits.length < 8) {
-        return NextResponse.json({ error: "phone_too_short" }, { status: 400 });
-      }
-      const fromE164 = rawPhone.startsWith("+") ? rawPhone : `+${digits}`;
-      const result = await processInboundMessaging({
-        channel: "whatsapp",
-        fromE164,
-        body: parsed.data.body,
-      });
-      if (!result.ok) {
-        return NextResponse.json(
-          { error: result.error, hint: "Check that this case has a contact with a valid phone number, and that the contact maps back to this case." },
-          { status: 400 },
-        );
-      }
-      return NextResponse.json({ ok: true });
-    }
     case "force_sms": {
       assertNoError(
         "admin force sms",

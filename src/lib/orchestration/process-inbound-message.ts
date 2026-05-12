@@ -49,17 +49,13 @@ export async function processInboundMessaging(input: {
   body: string;
   providerMessageId?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const TAG = "[pipeline]";
-  console.log(`${TAG} ④ resolving contact for ${input.fromE164}`);
-
   const sb = serviceSupabase();
   const resolved = await resolveContactForInboundPhone(input.fromE164, sb);
   if (!resolved.ok) {
-    console.warn(`${TAG} ✗ unknown_contact — no contact/reservation row matches ${input.fromE164}. Check contacts.phone and reservations.source_phone in the DB.`);
+    console.warn(`[pipeline] unknown_contact — no contact/reservation matches ${input.fromE164}`);
     return { ok: false, error: "unknown_contact" };
   }
   const contact = mapContact(resolved.contactRaw);
-  console.log(`${TAG} ⑤ contact found`, { contactId: contact.id, reservationId: contact.reservationId });
 
   const resRes = await sb
     .from("reservations")
@@ -67,15 +63,14 @@ export async function processInboundMessaging(input: {
     .eq("id", contact.reservationId)
     .maybeSingle();
   if (resRes.error) {
-    console.error(`${TAG} ✗ reservation query error:`, resRes.error.message);
+    console.error("[pipeline] reservation query error:", resRes.error.message);
     return { ok: false, error: resRes.error.message };
   }
   if (!resRes.data) {
-    console.warn(`${TAG} ✗ reservation_not_found for id ${contact.reservationId}`);
+    console.warn(`[pipeline] reservation_not_found for id ${contact.reservationId}`);
     return { ok: false, error: "reservation_not_found" };
   }
   const reservation = mapReservation(resRes.data as Record<string, unknown>);
-  console.log(`${TAG} ⑤ reservation found`, { externalBookingId: reservation.externalBookingId });
 
   const caseRows = takeRows<Record<string, unknown>>(
     "case for reservation",
@@ -88,11 +83,10 @@ export async function processInboundMessaging(input: {
   );
   const caseRowRaw = caseRows[0];
   if (!caseRowRaw) {
-    console.warn(`${TAG} ✗ case_not_found for reservation ${reservation.id}`);
+    console.warn(`[pipeline] case_not_found for reservation ${reservation.id}`);
     return { ok: false, error: "case_not_found" };
   }
   const caseRow = mapCase(caseRowRaw);
-  console.log(`${TAG} ⑤ case found`, { caseId: caseRow.id, orchestrationState: caseRow.orchestrationState, caseStatus: caseRow.caseStatus });
 
   assertNoError(
     "inbound message insert",
@@ -105,8 +99,6 @@ export async function processInboundMessaging(input: {
       status: "received",
     }),
   );
-  console.log(`${TAG} ⑥ inbound message row saved to DB`);
-
   await writeBehaviouralEvent({
     eventType: "customer_replied",
     caseId: caseRow.id,
@@ -118,23 +110,19 @@ export async function processInboundMessaging(input: {
     caseRow.caseStatus === "closed" ||
     caseRow.orchestrationState === "cancelled"
   ) {
-    console.log(`${TAG} case is ${caseRow.caseStatus}/${caseRow.orchestrationState} — no reply sent`);
     return { ok: true };
   }
 
-  console.log(`${TAG} ⑥ detecting language (OpenAI)…`);
   let langDet: Awaited<ReturnType<typeof detectLanguageFromText>>;
   try {
     langDet = await detectLanguageFromText(input.body);
-    console.log(`${TAG} ⑥ language detected:`, langDet);
   } catch (e) {
-    console.warn(`${TAG} ✗ detectLanguageFromText failed (falling back to en):`, e);
+    console.warn("[pipeline] detectLanguageFromText failed, falling back to en:", e);
     langDet = { language: "en", confidence: 0.3 };
   }
   const preferred =
     (contact.preferredLanguage as SupportedLanguage) || "en";
   const convLang = resolveConversationLanguage(langDet, preferred);
-  console.log(`${TAG} ⑥ conversation language resolved: ${convLang}`);
   assertNoError(
     "contact language update",
     await sb
@@ -197,7 +185,6 @@ export async function processInboundMessaging(input: {
       whatsappConversationFeaturesEnabled() &&
       !opts?.skipNaturalize
     ) {
-      console.log(`${TAG} ⑦ naturalizing reply (OpenAI)…`);
       try {
         const n = await naturalizeWhatsappReply({
           scriptedIntent: text,
@@ -207,19 +194,13 @@ export async function processInboundMessaging(input: {
           reservationSummary: reservationBlurb(),
           passengerName: reservation.customerName,
         });
-        if (n) {
-          out = n;
-          console.log(`${TAG} ⑦ reply naturalized`);
-        }
+        if (n) out = n;
       } catch (e) {
-        console.warn(`${TAG} ✗ naturalizeWhatsappReply failed — sending scripted text:`, e);
+        console.warn("[pipeline] naturalizeWhatsappReply failed, sending scripted text:", e);
       }
     }
-    console.log(`${TAG} ⑦ sending outbound via ${input.channel}, excerpt: "${out.slice(0, 80)}"`);
     await sendReply(caseRow, reservation, contact, out, input.channel);
   }
-
-  console.log(`${TAG} ⑥ entering state branch: "${caseRow.orchestrationState}" (aiConversation=${whatsappConversationFeaturesEnabled()}, openaiKey=${Boolean(process.env.OPENAI_API_KEY)})`);
 
   if (caseRow.orchestrationState === "needs_human") {
     if (needsHumanAutoReplyEnabled()) {
@@ -601,20 +582,6 @@ export async function processInboundMessaging(input: {
     await deliverOutbound(msg, { skipNaturalize: true });
   }
 
-  if (input.channel === "whatsapp" && !outboundThisTurn) {
-    const snap = await sb
-      .from("cases")
-      .select("orchestration_state, case_status")
-      .eq("id", caseRow.id)
-      .maybeSingle();
-    console.info("[processInboundMessaging] whatsapp inbound finished with no outbound", {
-      caseId: caseRow.id,
-      orchestrationState: snap.data?.orchestration_state,
-      caseStatus: snap.data?.case_status,
-      excerpt: input.body.slice(0, 80),
-    });
-  }
-
   return { ok: true };
 }
 
@@ -672,14 +639,12 @@ async function sendReply(
   text: string,
   preferredChannel: "whatsapp" | "sms",
 ) {
-  const TAG = "[pipeline]";
   const to = contact.phone ?? reservation.sourcePhone;
   if (!to) {
-    console.warn(`${TAG} ✗ sendReply skipped — no phone on contact or reservation`);
+    console.warn("[pipeline] sendReply skipped — no phone on contact or reservation");
     return;
   }
   const toE164 = to.startsWith("+") ? to : `+${to.replace(/\D/g, "")}`;
-  console.log(`${TAG} ⑦ calling Meta/Infobip send → ${toE164} via ${preferredChannel}`);
   const send = await sendViaPreferredChannel({
     caseId: caseRow.id,
     reservationId: reservation.id,
@@ -688,7 +653,7 @@ async function sendReply(
     body: text,
   });
   if (!send.ok) {
-    console.warn(`${TAG} ✗ outbound send FAILED`, {
+    console.warn("[pipeline] outbound send failed", {
       caseId: caseRow.id,
       preferredChannel,
       error: send.error,
@@ -709,7 +674,6 @@ async function sendReply(
     }
     return;
   }
-  console.log(`${TAG} ⑧ outbound sent OK via ${send.channel}, msgId=${send.providerMessageId}`);
   const sb = serviceSupabase();
   assertNoError(
     "outbound reply message",
@@ -722,7 +686,6 @@ async function sendReply(
       status: "sent",
     }),
   );
-  console.log(`${TAG} ⑧ outbound message row saved to DB`);
 }
 
 function formatSummary(data: CollectedDataJson, lang: SupportedLanguage): string {

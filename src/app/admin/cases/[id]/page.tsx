@@ -2,8 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { getCaseDetail } from "@/lib/admin/queries";
-import { CaseActions } from "./case-actions";
-
 export default async function CaseDetailPage({
   params,
 }: {
@@ -30,10 +28,7 @@ export default async function CaseDetailPage({
           </h1>
           <p className="font-mono text-xs text-stone-500 dark:text-stone-400">{c.id}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <RefreshDataButton />
-          <CaseActions caseId={c.id} />
-        </div>
+        <RefreshDataButton />
       </div>
 
       <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
@@ -81,44 +76,72 @@ export default async function CaseDetailPage({
         id="messages"
         className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none"
       >
-        <h2 className="text-lg font-medium text-stone-900 dark:text-stone-50">Messages</h2>
+        <h2 className="text-lg font-medium text-stone-900 dark:text-stone-50">Conversation</h2>
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-          Oldest first · inbound (customer) vs outbound (system / admin).
+          Oldest first — customer on the left, assistant &amp; templates on the right.
         </p>
-        <ul className="mt-3 space-y-3 text-sm">
-          {messages.length === 0 ? (
-            <li className="text-stone-500 dark:text-stone-400">No messages on this case yet.</li>
-          ) : null}
-          {messages.map((m) => {
-            const inbound = m.direction === "inbound";
-            return (
-              <li
-                key={m.id}
-                className={`flex ${inbound ? "justify-start" : "justify-end"}`}
-              >
-                <div
-                  className={
-                    inbound
-                      ? "max-w-[min(100%,42rem)] rounded-lg border border-teal-200 bg-teal-50/90 px-3 py-2 dark:border-teal-800 dark:bg-teal-950/50"
-                      : "max-w-[min(100%,42rem)] rounded-lg border border-stone-200 bg-stone-100/90 px-3 py-2 dark:border-stone-600 dark:bg-stone-800/80"
-                  }
-                >
-                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-stone-500 dark:text-stone-400">
-                    <span className="font-medium text-stone-600 dark:text-stone-300">
-                      {inbound ? "Customer" : "Outbound"}
-                    </span>
-                    <span>{m.createdAt.toISOString().slice(0, 19).replace("T", " ")}</span>
-                    <span>{m.channel}</span>
-                    <span>{m.status}</span>
+        {messages.length === 0 ? (
+          <p className="mt-4 text-sm text-stone-400 dark:text-stone-500">No messages yet.</p>
+        ) : (
+          <ol className="mt-4 space-y-1">
+            {messages.map((m, i) => {
+              const inbound = m.direction === "inbound";
+              const isTemplate = !inbound && m.body.startsWith("[WhatsApp template:");
+              const displayBody = isTemplate
+                ? m.body.replace(/^\[WhatsApp template:[^\]]*\]\n?/, "").trim()
+                : m.body;
+
+              const prev = messages[i - 1];
+              const showDateSep =
+                !prev ||
+                new Date(m.createdAt).toDateString() !==
+                  new Date(prev.createdAt).toDateString();
+              const ts = m.createdAt.toISOString().slice(11, 16);
+              const dateLabel = m.createdAt.toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              });
+
+              return (
+                <li key={m.id}>
+                  {showDateSep && (
+                    <div className="my-4 flex items-center gap-3">
+                      <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
+                      <span className="text-[11px] text-stone-400 dark:text-stone-500">{dateLabel}</span>
+                      <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
+                    </div>
+                  )}
+                  <div className={`flex ${inbound ? "justify-start" : "justify-end"} mt-1.5`}>
+                    <div className={`max-w-[min(85%,36rem)] space-y-0.5 ${inbound ? "" : "items-end flex flex-col"}`}>
+                      {isTemplate && (
+                        <div className="flex justify-end">
+                          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:bg-teal-900/60 dark:text-teal-300">
+                            Welcome template
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        className={
+                          inbound
+                            ? "rounded-2xl rounded-tl-sm bg-stone-100 px-3.5 py-2.5 text-sm text-stone-900 dark:bg-stone-800 dark:text-stone-100"
+                            : isTemplate
+                              ? "rounded-2xl rounded-tr-sm bg-teal-700 px-3.5 py-2.5 text-sm text-white"
+                              : "rounded-2xl rounded-tr-sm bg-teal-600 px-3.5 py-2.5 text-sm text-white"
+                        }
+                      >
+                        <p className="whitespace-pre-wrap leading-relaxed">{displayBody}</p>
+                      </div>
+                      <p className={`text-[10px] text-stone-400 dark:text-stone-500 ${inbound ? "pl-1" : "pr-1"}`}>
+                        {inbound ? "Customer" : "Assistant"} · {ts} · {m.channel}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap text-stone-900 dark:text-stone-100">
-                    {m.body}
-                  </p>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </section>
 
       <details className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
