@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
+import { SendTestGeotravelWelcomeButton } from "@/components/admin/send-test-geotravel-welcome-button";
 import { SendGeotravelWhatsAppButton } from "@/components/admin/send-geotravel-whatsapp-button";
 import {
   fetchGeotravelBookings,
@@ -497,7 +498,8 @@ export async function BookingsView({
             </span>
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+          <SendTestGeotravelWelcomeButton />
           <RefreshDataButton />
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
             Live

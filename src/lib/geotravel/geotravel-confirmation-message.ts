@@ -2,12 +2,35 @@ import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import type { SupportedLanguage } from "@/lib/contracts/extraction";
 import { buildInitialOutreachMessage } from "@/lib/orchestration/outreach-first-message";
 
-/** Pilot: only this national number may receive the admin “WhatsApp confirm” action. */
+/** Pilot: admin “WhatsApp confirm” only for rows whose phone digits include this (national PT). */
 export const WHATSAPP_PILOT_PHONE_DIGITS = "966915976";
+
+/** Second pilot line (+351 913 535 544): match full international digits or national `913535544`. */
+export const WHATSAPP_PILOT_PHONE_DIGITS_351913535544 = "351913535544";
+const WHATSAPP_PILOT_NATIONAL_913535544 = "913535544";
+
+/**
+ * Digit-only substrings: if `passenger_phone` digits include any of these, the row
+ * may show “WhatsApp confirm” (still requires Active + CONFIRMED).
+ * Append with `GEOTRAVEL_WHATSAPP_PILOT_PHONE_SUBSTRINGS` (comma-separated).
+ */
+export function whatsappPilotAllowSubstrings(): string[] {
+  const env = process.env.GEOTRAVEL_WHATSAPP_PILOT_PHONE_SUBSTRINGS?.trim();
+  const fromEnv = env
+    ? env.split(/[,;]/).map((s) => s.replace(/\D/g, "")).filter(Boolean)
+    : [];
+  const merged = [
+    WHATSAPP_PILOT_PHONE_DIGITS,
+    WHATSAPP_PILOT_PHONE_DIGITS_351913535544,
+    WHATSAPP_PILOT_NATIONAL_913535544,
+    ...fromEnv,
+  ];
+  return [...new Set(merged.filter((s) => s.length >= 6))];
+}
 
 export function bookingHasPilotPhone(booking: GeotravelBooking): boolean {
   const d = (booking.passenger_phone ?? "").replace(/\D/g, "");
-  return d.includes(WHATSAPP_PILOT_PHONE_DIGITS);
+  return whatsappPilotAllowSubstrings().some((sub) => d.includes(sub));
 }
 
 function formatRouteStop(
@@ -89,10 +112,7 @@ export function buildGeotravelWhatsAppConfirmationMessage(
 export function isBookingEligibleForWhatsAppConfirmation(
   booking: GeotravelBooking,
 ): boolean {
-  if (!bookingHasPilotPhone(booking)) return false;
-  if (booking.outcome !== "Active") return false;
-  const st = (booking.status ?? "").trim().toUpperCase().replace(/\s+/g, "_");
-  if (st !== "CONFIRMED") return false;
   const digits = (booking.passenger_phone ?? "").replace(/\D/g, "");
-  return digits.length >= 8;
+  if (digits.length < 8) return false;
+  return bookingHasPilotPhone(booking);
 }
