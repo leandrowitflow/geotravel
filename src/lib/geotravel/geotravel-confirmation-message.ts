@@ -9,6 +9,10 @@ export const WHATSAPP_PILOT_PHONE_DIGITS = "966915976";
 export const WHATSAPP_PILOT_PHONE_DIGITS_351913535544 = "351913535544";
 const WHATSAPP_PILOT_NATIONAL_913535544 = "913535544";
 
+/** Third pilot line (+351 930 478 387): match `351930478387` or national `930478387`. */
+export const WHATSAPP_PILOT_PHONE_DIGITS_351930478387 = "351930478387";
+const WHATSAPP_PILOT_NATIONAL_930478387 = "930478387";
+
 /**
  * Digit-only substrings: if `passenger_phone` digits include any of these, the row
  * may show “WhatsApp confirm” (still requires Active + CONFIRMED).
@@ -23,6 +27,8 @@ export function whatsappPilotAllowSubstrings(): string[] {
     WHATSAPP_PILOT_PHONE_DIGITS,
     WHATSAPP_PILOT_PHONE_DIGITS_351913535544,
     WHATSAPP_PILOT_NATIONAL_913535544,
+    WHATSAPP_PILOT_PHONE_DIGITS_351930478387,
+    WHATSAPP_PILOT_NATIONAL_930478387,
     ...fromEnv,
   ];
   return [...new Set(merged.filter((s) => s.length >= 6))];
