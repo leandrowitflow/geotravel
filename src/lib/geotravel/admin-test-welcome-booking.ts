@@ -56,5 +56,6 @@ export function buildSyntheticTestWelcomeBooking(
     multidays: null,
     book_lead_time: null,
     pickup_dow: null,
+    updated_at: now,
   };
 }

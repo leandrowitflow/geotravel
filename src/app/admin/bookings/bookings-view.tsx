@@ -3,12 +3,18 @@ import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { SendTestGeotravelWelcomeButton } from "@/components/admin/send-test-geotravel-welcome-button";
 import { SendGeotravelWhatsAppButton } from "@/components/admin/send-geotravel-whatsapp-button";
+import { SyncGeotravelBookingsButton } from "@/components/admin/sync-geotravel-bookings-button";
 import {
   fetchGeotravelBookings,
   fetchGeotravelBookingsPhoneScan,
   fetchGeotravelBookingsRefScan,
   type GeotravelBooking,
 } from "@/lib/geotravel/bookings-api";
+import {
+  geotravelBookingsIncrementalEnabled,
+  getGeotravelBookingsDeltaHighlights,
+  isBookingDeltaHighlight,
+} from "@/lib/geotravel/bookings-sync-cursor";
 
 /** Server-side sort keys (current page only; API has no sort param). */
 const SORT_COLUMNS = [
@@ -319,6 +325,10 @@ export async function BookingsView({
   const refQ = sp.ref?.trim();
   const phoneQ = sp.phone?.trim();
   const phoneDigits = phoneQ?.replace(/\D/g, "").trim() ?? "";
+  const deltaSyncEnabled = geotravelBookingsIncrementalEnabled();
+  const deltaHighlights = deltaSyncEnabled
+    ? await getGeotravelBookingsDeltaHighlights()
+    : null;
 
   if (phoneQ && phoneDigits.length > 0 && phoneDigits.length < 6) {
     return (
@@ -427,6 +437,9 @@ export async function BookingsView({
   const phoneScanActive = Boolean(phoneDigits);
   const phoneScanTruncated = result.ok && Boolean(result.phoneScanTruncated);
   const refScanTruncated = result.ok && Boolean(result.refScanTruncated);
+  const highlightedOnPage = deltaHighlights
+    ? sortedBookings.filter((b) => isBookingDeltaHighlight(b, deltaHighlights)).length
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -467,6 +480,24 @@ export async function BookingsView({
                   {total.toLocaleString()}
                 </span>{" "}
                 total bookings
+                {deltaHighlights ? (
+                  <>
+                    {" · "}
+                    <span className="font-medium text-amber-800 dark:text-amber-300">
+                      {deltaHighlights.bookingIds.length.toLocaleString()} new/changed in last sync
+                    </span>
+                    {highlightedOnPage > 0 ? (
+                      <>
+                        {" "}
+                        (<span className="font-medium">{highlightedOnPage}</span> highlighted on this page)
+                      </>
+                    ) : null}
+                  </>
+                ) : deltaSyncEnabled ? (
+                  <span className="block pt-1 text-xs text-stone-500 dark:text-stone-400">
+                    Use <span className="font-medium">Sync changes</span> to detect new or updated rows (highlighted in amber).
+                  </span>
+                ) : null}
               </>
             )}
             {serverSideFilter && (
@@ -499,6 +530,7 @@ export async function BookingsView({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+          {deltaSyncEnabled ? <SyncGeotravelBookingsButton /> : null}
           <SendTestGeotravelWelcomeButton />
           <RefreshDataButton />
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
@@ -506,6 +538,17 @@ export async function BookingsView({
           </span>
         </div>
       </div>
+
+      {deltaHighlights && !phoneScanActive && !refScanActive ? (
+        <p className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+          <span
+            className="inline-block size-3 shrink-0 rounded-sm bg-amber-200 ring-1 ring-amber-400 dark:bg-amber-800 dark:ring-amber-600"
+            aria-hidden
+          />
+          Amber rows = new or updated since last sync (
+          {deltaHighlights.syncedAt.slice(0, 19).replace("T", " ")} UTC)
+        </p>
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 text-xs">
@@ -615,15 +658,25 @@ export async function BookingsView({
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
-            {sortedBookings.map((b: GeotravelBooking) => (
+            {sortedBookings.map((b: GeotravelBooking) => {
+              const deltaRow =
+                deltaHighlights != null && isBookingDeltaHighlight(b, deltaHighlights);
+              return (
               <tr
                 key={b.id}
-                className="hover:bg-stone-50/60 dark:hover:bg-stone-800/50"
+                className={
+                  deltaRow
+                    ? "bg-amber-50/90 ring-1 ring-inset ring-amber-200/80 hover:bg-amber-100/80 dark:bg-amber-950/35 dark:ring-amber-800/80 dark:hover:bg-amber-950/50"
+                    : "hover:bg-stone-50/60 dark:hover:bg-stone-800/50"
+                }
               >
                 {/* Ref */}
                 <td className="px-3 py-2">
-                  <div className="font-mono text-xs font-medium text-stone-800 dark:text-stone-100">
-                    {b.booking_reference ?? b.id}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="font-mono text-xs font-medium text-stone-800 dark:text-stone-100">
+                      {b.booking_reference ?? b.id}
+                    </div>
+                    {deltaRow ? <Badge tone="warn">Updated</Badge> : null}
                   </div>
                   {b.loyalty_name && (
                     <Badge tone="neutral">{b.loyalty_name}</Badge>
@@ -747,7 +800,8 @@ export async function BookingsView({
                   <SendGeotravelWhatsAppButton booking={b} />
                 </td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
 

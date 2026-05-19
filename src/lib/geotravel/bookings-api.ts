@@ -1,10 +1,17 @@
+import {
+  advanceGeotravelBookingsSyncCursor,
+  maxUpdatedAtFromBookings,
+  saveGeotravelBookingsDeltaHighlights,
+} from "@/lib/geotravel/bookings-sync-cursor";
+
 /**
  * Geotravel Data API client.
  * REST API for external access to bookings data.
  * Documented query params include limit (1–500), offset, outcome, status, from, to,
  * pickup_city, dropoff_city, country, airport, passenger_phone (server-side phone filter:
  * any format, min 6 digits, matches last 9 stored digits), booking_reference / ref,
- * plateform, etc.
+ * plateform, updated_from / modified_since, updated_to, order_by (booked_date |
+ * updated_at | pickup_date_time), etc.
  * @see https://geotraveldata.com/api-docs
  */
 
@@ -42,6 +49,8 @@ export type GeotravelBooking = {
   multidays: number | null;
   book_lead_time: string | null;
   pickup_dow: number | null;
+  /** Present on API rows when the bookings-api edge function is up to date; used for incremental sync. */
+  updated_at?: string | null;
 };
 
 export type GeotravelBookingsParams = {
@@ -62,6 +71,12 @@ export type GeotravelBookingsParams = {
   /** Server-side phone filter (Geotravel normalizes input; min 6 digits). */
   passenger_phone?: string;
   plateform?: string;
+  /** ISO-8601 — rows with updated_at on or after this instant (alias: modified_since). */
+  updated_from?: string;
+  modified_since?: string;
+  /** ISO-8601 — upper bound on updated_at when supported. */
+  updated_to?: string;
+  order_by?: "booked_date" | "updated_at" | "pickup_date_time";
 };
 
 export type GeotravelBookingsResult =
@@ -80,6 +95,10 @@ export type GeotravelBookingsResult =
       serverSideFilter?: boolean;
       /** When client-side scan ran, max rows walked (from GEOTRAVEL_MAX_SCAN_ROWS or default). */
       clientScanRowCap?: number;
+      /** Incremental delta: `updated_from` sent to the API. */
+      incrementalFrom?: string;
+      /** True when the list used updated_from / order_by=updated_at. */
+      incrementalSync?: boolean;
     }
   | { ok: false; error: string };
 
@@ -149,6 +168,7 @@ export async function fetchGeotravelBookingsRefScan(input: {
   refSubstring: string;
   page: number;
   limit: number;
+  updatedFrom?: string;
 }): Promise<GeotravelBookingsResult> {
   const refRaw = input.refSubstring.trim();
   const refLower = refRaw.toLowerCase();
@@ -162,11 +182,7 @@ export async function fetchGeotravelBookingsRefScan(input: {
     });
   }
 
-  const base: GeotravelBookingsParams = {
-    outcome: input.outcome,
-    airport: input.airport,
-    status: input.status,
-  };
+  const base = bookingsListBaseParams(input);
 
   const totalRes = await fetchGeotravelBookings({ ...base, limit: 1, offset: 0 });
   if (!totalRes.ok) return totalRes;
@@ -180,6 +196,8 @@ export async function fetchGeotravelBookingsRefScan(input: {
       refSearchApiTotal: 0,
       refScanTruncated: false,
       serverSideFilter: false,
+      incrementalFrom: input.updatedFrom,
+      incrementalSync: Boolean(input.updatedFrom),
     };
   }
 
@@ -229,6 +247,8 @@ export async function fetchGeotravelBookingsRefScan(input: {
       refSearchApiTotal: Tu,
       refScanTruncated: false,
       serverSideFilter: true,
+      incrementalFrom: input.updatedFrom,
+      incrementalSync: Boolean(input.updatedFrom),
     };
   }
 
@@ -279,7 +299,27 @@ export async function fetchGeotravelBookingsRefScan(input: {
     refSearchApiTotal: apiTotal,
     serverSideFilter: false,
     clientScanRowCap: scanCap,
+    incrementalFrom: input.updatedFrom,
+    incrementalSync: Boolean(input.updatedFrom),
   };
+}
+
+function bookingsListBaseParams(input: {
+  outcome?: string;
+  airport?: string;
+  status?: string;
+  updatedFrom?: string;
+}): GeotravelBookingsParams {
+  const base: GeotravelBookingsParams = {
+    outcome: input.outcome,
+    airport: input.airport,
+    status: input.status,
+  };
+  if (input.updatedFrom) {
+    base.updated_from = input.updatedFrom;
+    base.order_by = "updated_at";
+  }
+  return base;
 }
 
 /**
@@ -299,6 +339,7 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
   refSubstring?: string;
   page: number;
   limit: number;
+  updatedFrom?: string;
 }): Promise<GeotravelBookingsResult> {
   const queryDigits = input.phoneDigits.replace(/\D/g, "").trim();
   if (!queryDigits) {
@@ -311,11 +352,7 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
     };
   }
 
-  const base: GeotravelBookingsParams = {
-    outcome: input.outcome,
-    airport: input.airport,
-    status: input.status,
-  };
+  const base = bookingsListBaseParams(input);
 
   const rawParam = input.passengerPhoneParam?.trim();
   const phoneParam =
@@ -335,6 +372,8 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
       phoneSearchApiTotal: 0,
       phoneScanTruncated: false,
       serverSideFilter: true,
+      incrementalFrom: input.updatedFrom,
+      incrementalSync: Boolean(input.updatedFrom),
     };
   }
 
@@ -361,6 +400,8 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
       phoneSearchApiTotal: Tu,
       phoneScanTruncated: false,
       serverSideFilter: true,
+      incrementalFrom: input.updatedFrom,
+      incrementalSync: Boolean(input.updatedFrom),
     };
   }
 
@@ -409,6 +450,8 @@ export async function fetchGeotravelBookingsPhoneScan(input: {
     phoneScanTruncated: truncated,
     serverSideFilter: true,
     clientScanRowCap: truncated ? scanCap : undefined,
+    incrementalFrom: input.updatedFrom,
+    incrementalSync: Boolean(input.updatedFrom),
   };
 }
 
@@ -442,6 +485,10 @@ export async function fetchGeotravelBookings(
   if (params.ref) qs.set("ref", params.ref);
   if (params.passenger_phone) qs.set("passenger_phone", params.passenger_phone);
   if (params.plateform) qs.set("plateform", params.plateform);
+  if (params.updated_from) qs.set("updated_from", params.updated_from);
+  if (params.modified_since) qs.set("modified_since", params.modified_since);
+  if (params.updated_to) qs.set("updated_to", params.updated_to);
+  if (params.order_by) qs.set("order_by", params.order_by);
 
   const url = `${API_BASE}?${qs.toString()}`;
 
@@ -503,4 +550,93 @@ export async function fetchGeotravelBookings(
     ok: false,
     error: "geotravel_429:Rate limit exceeded (retries exhausted)",
   };
+}
+
+export type GeotravelIncrementalListInput = Omit<
+  GeotravelBookingsParams,
+  "updated_from" | "modified_since" | "order_by"
+> & {
+  page: number;
+  /** When set, only rows updated at or after this instant (stable sort: updated_at asc). */
+  updatedFrom?: string;
+};
+
+/**
+ * One page of the bookings list, optionally scoped to a delta window (`updated_from`).
+ */
+export async function fetchGeotravelBookingsIncrementalList(
+  input: GeotravelIncrementalListInput,
+): Promise<GeotravelBookingsResult> {
+  const limit = input.limit ?? 500;
+  const offset = input.page * limit;
+  const { page: _page, updatedFrom, ...rest } = input;
+
+  const params: GeotravelBookingsParams = {
+    ...rest,
+    limit,
+    offset,
+  };
+
+  if (updatedFrom) {
+    params.updated_from = updatedFrom;
+    params.order_by = "updated_at";
+  }
+
+  const res = await fetchGeotravelBookings(params);
+  if (!res.ok) return res;
+
+  return {
+    ...res,
+    incrementalFrom: updatedFrom,
+    incrementalSync: Boolean(updatedFrom),
+  };
+}
+
+/**
+ * Walk every page in the current delta window and advance the stored cursor to the
+ * latest `updated_at` seen (for “Refresh data” / cron).
+ */
+export async function pullGeotravelBookingsDeltaWindow(
+  base: Omit<GeotravelBookingsParams, "limit" | "offset" | "updated_from" | "order_by">,
+  updatedFrom: string,
+): Promise<
+  | { ok: true; rows: GeotravelBooking[]; cursorAdvancedTo: string | null }
+  | { ok: false; error: string }
+> {
+  const byId = new Map<number, GeotravelBooking>();
+  let offset = 0;
+  let pageIndex = 0;
+  let total = 0;
+
+  while (true) {
+    await paceCrossPageRequest(pageIndex);
+    const r = await fetchGeotravelBookings({
+      ...base,
+      updated_from: updatedFrom,
+      order_by: "updated_at",
+      limit: CROSS_PAGE_CHUNK,
+      offset,
+    });
+    pageIndex += 1;
+    if (!r.ok) return { ok: false, error: r.error };
+
+    total = r.pagination.total;
+    for (const row of r.data) {
+      byId.set(row.id, row);
+    }
+
+    if (r.data.length < CROSS_PAGE_CHUNK) break;
+    offset += CROSS_PAGE_CHUNK;
+    if (offset >= total) break;
+  }
+
+  const rows = [...byId.values()];
+  const batchMax = maxUpdatedAtFromBookings(rows);
+  let cursorAdvancedTo: string | null = null;
+  if (batchMax) {
+    cursorAdvancedTo = await advanceGeotravelBookingsSyncCursor(rows);
+  }
+  await saveGeotravelBookingsDeltaHighlights(rows, updatedFrom);
+
+  return { ok: true, rows, cursorAdvancedTo };
 }
