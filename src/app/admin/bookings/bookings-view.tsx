@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
-import { SendTestGeotravelWelcomeButton } from "@/components/admin/send-test-geotravel-welcome-button";
 import { SendGeotravelWhatsAppButton } from "@/components/admin/send-geotravel-whatsapp-button";
-import { SyncGeotravelBookingsButton } from "@/components/admin/sync-geotravel-bookings-button";
 import {
   fetchGeotravelBookings,
   fetchGeotravelBookingsPhoneScan,
@@ -14,6 +12,7 @@ import {
   geotravelBookingsIncrementalEnabled,
   getGeotravelBookingsDeltaHighlights,
   isBookingDeltaHighlight,
+  type GeotravelDeltaHighlights,
 } from "@/lib/geotravel/bookings-sync-cursor";
 
 /** Server-side sort keys (current page only; API has no sort param). */
@@ -92,6 +91,30 @@ function sortBookingsData(
     if (c !== 0) return c * mul;
     return (a.id - b.id) * mul;
   });
+}
+
+/** Amber-highlighted rows first (newest `updated_at` first), then the rest in existing order. */
+function pinDeltaHighlightsFirst(
+  rows: GeotravelBooking[],
+  highlights: GeotravelDeltaHighlights,
+): GeotravelBooking[] {
+  const highlighted: GeotravelBooking[] = [];
+  const rest: GeotravelBooking[] = [];
+  for (const b of rows) {
+    if (isBookingDeltaHighlight(b, highlights)) highlighted.push(b);
+    else rest.push(b);
+  }
+  highlighted.sort((a, b) => {
+    const ta = a.updated_at?.trim() ? Date.parse(a.updated_at) : 0;
+    const tb = b.updated_at?.trim() ? Date.parse(b.updated_at) : 0;
+    const validA = !Number.isNaN(ta);
+    const validB = !Number.isNaN(tb);
+    if (validA && validB && tb !== ta) return tb - ta;
+    if (validA && !validB) return -1;
+    if (!validA && validB) return 1;
+    return b.id - a.id;
+  });
+  return [...highlighted, ...rest];
 }
 
 function filterByRefPhone(
@@ -420,10 +443,14 @@ export async function BookingsView({
   const sortColumn =
     sp.sort && isSortColumn(sp.sort) ? sp.sort : undefined;
   const sortOrder = sp.order === "desc" ? "desc" : "asc";
-  const sortedBookings =
+  const columnSorted =
     sortColumn != null
       ? sortBookingsData(filteredBySearch, sortColumn, sortOrder)
       : filteredBySearch;
+  const sortedBookings =
+    deltaHighlights != null
+      ? pinDeltaHighlightsFirst(columnSorted, deltaHighlights)
+      : columnSorted;
 
   const active = filteredBySearch.filter((b) => b.outcome === "Active").length;
   const cancelled = filteredBySearch.filter((b) => b.outcome === "Cancelled").length;
@@ -495,7 +522,7 @@ export async function BookingsView({
                   </>
                 ) : deltaSyncEnabled ? (
                   <span className="block pt-1 text-xs text-stone-500 dark:text-stone-400">
-                    Use <span className="font-medium">Sync changes</span> to detect new or updated rows (highlighted in amber).
+                    Use <span className="font-medium">Refresh data</span> to sync changes from Geotravel (highlighted in amber).
                   </span>
                 ) : null}
               </>
@@ -530,9 +557,7 @@ export async function BookingsView({
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
-          {deltaSyncEnabled ? <SyncGeotravelBookingsButton /> : null}
-          <SendTestGeotravelWelcomeButton />
-          <RefreshDataButton />
+          <RefreshDataButton syncGeotravelDeltaFirst={deltaSyncEnabled} />
           <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
             Live
           </span>
