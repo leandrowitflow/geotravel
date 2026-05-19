@@ -8,7 +8,7 @@ export default async function SignInPage({ searchParams }: Props) {
   const supabase = await createClient();
   if (!supabase) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0f3d3a] px-4 text-center text-teal-100">
+      <div className="flex flex-1 items-center justify-center bg-[#0f3d3a] px-4 py-8 text-center text-teal-100">
         <p className="max-w-md text-sm">
           Set <code className="rounded bg-black/30 px-1">NEXT_PUBLIC_SUPABASE_URL</code>{" "}
           and a client key (
@@ -35,7 +35,7 @@ export default async function SignInPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0f3d3a] px-4">
+    <div className="flex flex-1 flex-col items-center justify-center bg-[#0f3d3a] px-4 py-8">
       <SignInForm defaultNext={nextPath} />
     </div>
   );

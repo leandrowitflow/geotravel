@@ -2,6 +2,7 @@ import Link from "next/link";
 import { BookingsSearchForm } from "@/components/admin/bookings-search-form";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { SendGeotravelWhatsAppButton } from "@/components/admin/send-geotravel-whatsapp-button";
+import { whatsappPilotAllowSubstrings } from "@/lib/geotravel/geotravel-confirmation-message";
 import {
   fetchGeotravelBookings,
   fetchGeotravelBookingsPhoneScan,
@@ -655,8 +656,11 @@ export async function BookingsView({
         <p className="border-b border-stone-200 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
           Status is sent to the Geotravel API. Column headers sort this page ({limit} rows).{" "}
           <span className="text-stone-600 dark:text-stone-300">
-            WhatsApp confirm (Active + CONFIRMED) is enabled only for passenger phone containing{" "}
-            <span className="font-mono">966915976</span>.
+            WhatsApp confirm is enabled only for pilot passenger phones (
+            <span className="font-mono">
+              {whatsappPilotAllowSubstrings().join(", ")}
+            </span>
+            ).
           </span>
           {phoneScanActive
             ? " Customer phone uses the Geotravel passenger_phone filter (≥6 digits, any format). With Ref, results are phone-filtered on the server and narrowed by ref on our side (capped by GEOTRAVEL_MAX_SCAN_ROWS)."

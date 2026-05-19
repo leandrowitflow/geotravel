@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
+import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import {
+  bookingHasPilotPhone,
   buildBookingWelcomeTemplateBody,
   firstNameForBookingWelcomeTemplate,
 } from "./geotravel-confirmation-message";
+
+function bookingWithPhone(phone: string): GeotravelBooking {
+  return {
+    id: 1,
+    passenger_phone: phone,
+  } as GeotravelBooking;
+}
 
 describe("firstNameForBookingWelcomeTemplate", () => {
   it("uses first token", () => {
@@ -12,6 +21,15 @@ describe("firstNameForBookingWelcomeTemplate", () => {
   it("falls back to there", () => {
     expect(firstNameForBookingWelcomeTemplate(null)).toBe("there");
     expect(firstNameForBookingWelcomeTemplate("   ")).toBe("there");
+  });
+});
+
+describe("bookingHasPilotPhone", () => {
+  it("matches 966915976 and 930478387 pilot lines", () => {
+    expect(bookingHasPilotPhone(bookingWithPhone("+351 966 915 976"))).toBe(true);
+    expect(bookingHasPilotPhone(bookingWithPhone("930478387"))).toBe(true);
+    expect(bookingHasPilotPhone(bookingWithPhone("+351930478387"))).toBe(true);
+    expect(bookingHasPilotPhone(bookingWithPhone("+351999000111"))).toBe(false);
   });
 });
 

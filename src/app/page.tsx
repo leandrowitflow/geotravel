@@ -8,7 +8,7 @@ export default async function Home() {
       ? (await supabase.auth.getUser()).data.user
       : null;
   return (
-    <div className="flex min-h-screen flex-col bg-[#0c3532] text-white">
+    <div className="flex flex-1 flex-col bg-[#0c3532] text-white">
       <div className="mx-auto flex max-w-3xl flex-1 flex-col justify-center gap-8 px-6 py-16">
         <p className="text-sm uppercase tracking-[0.2em] text-teal-200/90">
           Geotravel
@@ -37,26 +37,6 @@ export default async function Home() {
             </Link>
           )}
         </div>
-        <footer className="mt-auto border-t border-teal-800/40 pt-10 text-sm text-teal-200/80">
-          <p className="mb-2">Legal</p>
-          <ul className="flex flex-wrap gap-x-6 gap-y-2">
-            <li>
-              <Link href="/legal/terms" className="underline hover:text-white">
-                Terms of Service
-              </Link>
-            </li>
-            <li>
-              <Link href="/legal/privacy" className="underline hover:text-white">
-                Privacy Policy
-              </Link>
-            </li>
-            <li>
-              <Link href="/legal/data-deletion" className="underline hover:text-white">
-                User data deletion
-              </Link>
-            </li>
-          </ul>
-        </footer>
       </div>
     </div>
   );

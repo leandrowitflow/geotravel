@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function UnauthorizedPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-stone-100 p-6 dark:bg-stone-950 dark:text-stone-100">
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-stone-100 p-6 dark:bg-stone-950 dark:text-stone-100">
       <h1 className="text-xl font-semibold text-stone-800 dark:text-stone-100">Access denied</h1>
       <p className="text-stone-600 text-center max-w-md dark:text-stone-300">
         Your account is not authorised for the Geotravel admin center. Ask an
