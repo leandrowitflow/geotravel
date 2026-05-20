@@ -13,6 +13,7 @@ export const BEHAVIOURAL_EVENT_TYPES = [
   "field_completed",
   "field_refused",
   "extraction_low_confidence",
+  "collected_data_updated",
   "crm_write_attempted",
   "crm_write_succeeded",
   "crm_write_failed",
