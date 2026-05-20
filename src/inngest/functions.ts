@@ -39,14 +39,14 @@ export const geotravelBookingsDeltaSync = inngest.createFunction(
 );
 
 /**
- * Every 15 minutes: lifecycle WhatsApp templates for pilot phone 966915976 only.
- * Requires GEOTRAVEL_WHATSAPP_LIFECYCLE_AUTOMATION=true and WhatsApp env configured.
+ * Every 5 minutes (same cadence as bookings sync): one lifecycle WhatsApp per case,
+ * pilot phone 966915976 only. Requires GEOTRAVEL_WHATSAPP_LIFECYCLE_AUTOMATION=true.
  */
 export const geotravelLifecycleWhatsappPilot = inngest.createFunction(
   {
     id: "geotravel-lifecycle-whatsapp-pilot",
     name: "Geotravel lifecycle WhatsApp (pilot 966915976)",
-    triggers: [cron("*/15 * * * *")],
+    triggers: [cron("*/5 * * * *")],
   },
   async ({ step, logger }) => {
     const result = await step.run("lifecycle-whatsapp-pilot", () =>

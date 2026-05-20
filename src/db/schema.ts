@@ -4,6 +4,13 @@ export type CollectedDataJson = {
   passenger_count_actual?: number | null;
   children_count?: number | null;
   child_ages?: number[] | null;
+  cabin_luggage_pieces?: number | null;
+  cabin_luggage_notes?: string | null;
+  checked_luggage_pieces?: number | null;
+  checked_luggage_notes?: string | null;
+  extras_items?: string[] | null;
+  extras_none_confirmed?: boolean | null;
+  extras_notes?: string | null;
   special_luggage_present?: boolean | null;
   special_luggage_types?: string[] | null;
   reduced_mobility_present?: boolean | null;
@@ -15,6 +22,9 @@ export type CollectedDataJson = {
   last_confirmed_at?: string | null;
   /** Last Meta lifecycle phase sent on WhatsApp (welcome_1, canceled, …) for AI reply tone. */
   last_whatsapp_lifecycle_phase?: string | null;
+  /** Inngest lifecycle automation: at most one automated template send per case. */
+  lifecycle_automation_sent_at?: string | null;
+  lifecycle_automation_phase?: string | null;
 };
 
 export type ConsentJson = {
