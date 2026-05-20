@@ -3,6 +3,8 @@ import {
   buildCollectedDataDisplayRows,
   buildConsentDisplayRows,
 } from "@/lib/admin/collected-data-display";
+import { promptForFieldKey } from "@/lib/orchestration/field-prompts";
+import type { SupportedLanguage } from "@/lib/contracts/extraction";
 
 function DataGrid({
   rows,
@@ -49,12 +51,19 @@ function DataGrid({
 export function CollectedDataConsentPanel({
   collectedData,
   consent,
+  pendingFieldKey,
+  orchestrationState,
+  preferredLanguage = "en",
 }: {
   collectedData: CollectedDataJson | null | undefined;
   consent: ConsentJson | null | undefined;
+  pendingFieldKey?: string | null;
+  orchestrationState?: string | null;
+  preferredLanguage?: SupportedLanguage;
 }) {
   const dataRows = buildCollectedDataDisplayRows(collectedData);
   const consentRows = buildConsentDisplayRows(consent);
+  const lastTemplate = collectedData?.last_whatsapp_lifecycle_phase?.trim();
 
   return (
     <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
@@ -62,8 +71,34 @@ export function CollectedDataConsentPanel({
         Collected data &amp; consent
       </h2>
       <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-        Parsed from customer WhatsApp messages (updates as they reply).
+        Parsed from customer WhatsApp messages (updates as they reply). Open the
+        case after each reply and use Refresh — extraction requires{" "}
+        <code className="text-[10px]">OPENAI_API_KEY</code> on the server.
       </p>
+      {(orchestrationState || pendingFieldKey || lastTemplate) && (
+        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+          {orchestrationState ? (
+            <div>
+              <dt className="text-stone-500 dark:text-stone-400">Orchestration</dt>
+              <dd className="font-mono">{orchestrationState}</dd>
+            </div>
+          ) : null}
+          {lastTemplate ? (
+            <div>
+              <dt className="text-stone-500 dark:text-stone-400">Last WhatsApp template</dt>
+              <dd className="font-mono">{lastTemplate}</dd>
+            </div>
+          ) : null}
+          {pendingFieldKey ? (
+            <div className="sm:col-span-2">
+              <dt className="text-stone-500 dark:text-stone-400">Waiting for customer</dt>
+              <dd className="text-stone-800 dark:text-stone-200">
+                {promptForFieldKey(pendingFieldKey, preferredLanguage)}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      )}
 
       <h3 className="mt-4 text-sm font-semibold text-stone-800 dark:text-stone-200">
         Trip details from messages

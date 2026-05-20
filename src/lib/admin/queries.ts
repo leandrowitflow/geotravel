@@ -8,6 +8,7 @@ import type {
 import {
   mapBehaviouralEvent,
   mapCase,
+  mapContact,
   mapCrmSyncAttempt,
   mapMessage,
   mapReservation,
@@ -192,9 +193,20 @@ export async function getCaseDetail(caseId: string) {
       .order("created_at", { ascending: false })
       .limit(50),
   );
+  const contactRows = takeRows<Record<string, unknown>>(
+    "contact for case",
+    await sb
+      .from("contacts")
+      .select("*")
+      .eq("reservation_id", c.reservationId)
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+  const contact = contactRows[0] ? mapContact(contactRows[0]) : null;
   return {
     case: c,
     reservation: r,
+    contact,
     messages: msgRows.map(mapMessage) as MessageRow[],
     events: evRows.map(mapBehaviouralEvent) as BehaviouralEventRow[],
     crmSync: crmRows.map(mapCrmSyncAttempt) as CrmSyncAttemptRow[],

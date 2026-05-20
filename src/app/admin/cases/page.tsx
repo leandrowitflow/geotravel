@@ -3,6 +3,8 @@ import { DeleteAllCasesButton } from "@/components/admin/delete-all-cases-button
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { inboxStageFromOrchestration } from "@/lib/admin/inbox-stage";
 import { listCasesWithReservation } from "@/lib/admin/queries";
+import { formatExtraInformationSummary } from "@/lib/admin/collected-data-display";
+import { formatMessageForConversation } from "@/lib/admin/whatsapp-template-display";
 
 function Badge({
   children,
@@ -60,6 +62,7 @@ export default async function CasesInboxPage() {
               <th className="px-3 py-2 font-medium">Case</th>
               <th className="px-3 py-2 font-medium">Booking</th>
               <th className="px-3 py-2 font-medium">Customer</th>
+              <th className="px-3 py-2 font-medium min-w-[12rem]">Extra information</th>
               <th className="px-3 py-2 font-medium">Channel</th>
               <th className="px-3 py-2 font-medium">Messages</th>
               <th className="px-3 py-2 font-medium">Stage</th>
@@ -88,7 +91,14 @@ export default async function CasesInboxPage() {
                         {lm.createdAt.toISOString().slice(5, 16).replace("T", " ")}
                       </span>
                       <span className="mt-0.5 block font-normal text-stone-600 dark:text-stone-400">
-                        {excerpt(lm.body, 72)}
+                        {excerpt(
+                          formatMessageForConversation({
+                            direction: lm.direction,
+                            body: lm.body,
+                            metadata: lm.metadata,
+                          }).body,
+                          72,
+                        )}
                       </span>
                     </Link>
                   ) : (
@@ -108,6 +118,15 @@ export default async function CasesInboxPage() {
                   <div className="text-stone-500 dark:text-stone-400">{r.externalSource}</div>
                 </td>
                 <td className="px-3 py-2">{r.customerName ?? "—"}</td>
+                <td className="max-w-[18rem] px-3 py-2 text-xs text-stone-600 dark:text-stone-300">
+                  <Link
+                    href={`/admin/cases/${c.id}#collected-data`}
+                    className="block hover:text-teal-800 dark:hover:text-teal-300"
+                    title={formatExtraInformationSummary(c.collectedData, 500)}
+                  >
+                    {formatExtraInformationSummary(c.collectedData)}
+                  </Link>
+                </td>
                 <td className="px-3 py-2">{c.currentChannel}</td>
                 <td className="px-3 py-2 tabular-nums text-stone-700 dark:text-stone-200">
                   <Link

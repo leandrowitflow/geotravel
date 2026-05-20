@@ -18,6 +18,8 @@ import {
   sendViaPreferredChannel,
 } from "@/lib/messaging/send-via-channel";
 import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
+import { renderWhatsappTemplateCustomerBody } from "@/lib/admin/whatsapp-template-display";
+import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import {
   assertTransition,
   canTransition,
@@ -245,6 +247,15 @@ export async function executeGeotravelWelcomeSend(
 
   const sb = serviceSupabase();
 
+  const customerDisplayBody =
+    useWaTemplate && templateName
+      ? renderWhatsappTemplateCustomerBody({
+          templateName,
+          variables: templateVariables ?? {},
+          languageCode: templateLanguageCode,
+        })
+      : null;
+
   assertNoError(
     "geotravel whatsapp insert message",
     await sb.from("messages").insert({
@@ -260,6 +271,8 @@ export async function executeGeotravelWelcomeSend(
               lifecycle_phase: lifecyclePhase,
               meta_template_name: templateName,
               template_language: templateLanguageCode,
+              template_variables: templateVariables ?? {},
+              customer_display_body: customerDisplayBody,
             }
           : null,
     }),
@@ -340,6 +353,10 @@ export async function executeGeotravelWelcomeSend(
         })
         .eq("id", ctx.caseId),
     );
+  }
+
+  if (lifecyclePhase) {
+    await advanceCaseForOperationalTemplateSend(ctx.caseId, lifecyclePhase);
   }
 
   return {

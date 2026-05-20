@@ -1,10 +1,14 @@
 import { generateObject } from "ai";
-import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
+import {
+  hasOpenAiConfigured,
+  openAiChatModel,
+} from "@/lib/ai/openai-client";
 import {
   LANGUAGE_CONFIDENCE_THRESHOLD,
   SUPPORTED_LANGUAGES,
-  extractionResultSchema,
+  extractionFieldsSchema,
+  type ExtractionFields,
   type ExtractionResult,
   type SupportedLanguage,
 } from "@/lib/contracts/extraction";
@@ -67,12 +71,11 @@ export type LanguageDetection = z.infer<typeof languageSchema>;
 export async function detectLanguageFromText(
   text: string,
 ): Promise<LanguageDetection> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return { language: "en", confidence: 0.3 };
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: languageSchema,
     prompt: `Detect whether this customer message is primarily in English or Portuguese.
 Return "pt" for Portuguese (Portugal or Brazil — treat both as pt).
@@ -93,23 +96,39 @@ export function resolveConversationLanguage(
   return toAssistantLocale(raw);
 }
 
+function stripNullExtractionFields(fields: ExtractionFields): ExtractionFields {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== null) out[key] = value;
+  }
+  return out as ExtractionFields;
+}
+
+function assignExtractionConfidence(fields: ExtractionFields): ExtractionResult {
+  const stripped = stripNullExtractionFields(fields);
+  const confidence: Record<string, number> = {};
+  for (const key of Object.keys(stripped)) {
+    confidence[key] = 0.9;
+  }
+  return { ...stripped, confidence };
+}
+
 export async function extractOperationalFields(input: {
   customerMessage: string;
   prior: Partial<ExtractionResult> | null;
 }): Promise<ExtractionResult> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return { confidence: {} };
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
-    schema: extractionResultSchema,
+    model: openAiChatModel(),
+    schema: extractionFieldsSchema,
     prompt: buildOperationalExtractionPrompt(
       input.customerMessage,
       input.prior,
     ),
   });
-  return object;
+  return assignExtractionConfidence(object);
 }
 
 /** Short reply when a human is handling the case; uses OpenAI when configured. */
@@ -122,13 +141,12 @@ export async function generateInboundAssistantReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return null;
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: assistantAckSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
@@ -167,13 +185,12 @@ export async function naturalizeWhatsappReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return null;
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: naturalizeSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
@@ -212,13 +229,12 @@ export async function generateWhatsappEnrichmentAsk(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return null;
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: enrichmentAskSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
@@ -278,13 +294,12 @@ export async function generateWhatsappTemplateAwareReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext: WhatsappTemplateConversationContext;
 }): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return null;
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: catchAllSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
@@ -320,13 +335,12 @@ export async function generateWhatsappCatchAllReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!hasOpenAiConfigured()) {
     return null;
   }
-  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openAiChatModel(),
     schema: catchAllSchema,
     prompt: `${assistantSystemPreamble(locale)}
 

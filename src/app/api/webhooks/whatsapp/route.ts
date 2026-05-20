@@ -152,7 +152,13 @@ function extractFirstInboundUserText(payload: unknown): {
         const body = inboundBodyFromMessage(m);
         if (!fromRaw || !body) continue;
         const fromE164 = canonicalizeInboundWebhookFrom(fromRaw);
-        if (!fromE164) continue;
+        if (!fromE164) {
+          console.warn(
+            "[whatsapp webhook] skipped message — could not canonicalize from:",
+            fromRaw,
+          );
+          continue;
+        }
         return {
           fromE164,
           body,
@@ -209,9 +215,9 @@ export async function POST(req: Request) {
     }
   };
 
-  const awaitProcessing =
-    process.env.WHATSAPP_WEBHOOK_AWAIT_PROCESSING?.trim().toLowerCase() ===
-    "true";
+  const awaitEnv = process.env.WHATSAPP_WEBHOOK_AWAIT_PROCESSING?.trim().toLowerCase();
+  /** Default on: extraction + replies must finish before the handler returns (after() is unreliable locally). */
+  const awaitProcessing = awaitEnv !== "false";
   if (awaitProcessing) {
     await runInbound();
   } else {

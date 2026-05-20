@@ -26,6 +26,7 @@ import {
   scriptedEnrichmentCompleteAck,
   scriptedSummarizeCorrectionAsk,
 } from "@/lib/ai/assistant-locale";
+import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import { applyInboundExtractionToCaseRow } from "@/lib/orchestration/apply-inbound-extraction";
 import { resolveWhatsappTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
 import { buildCollectedDataDisplayRows } from "@/lib/admin/collected-data-display";
@@ -40,7 +41,7 @@ import {
   recordConsentFromText,
 } from "./commercial-layer";
 import { nextMissingField, promptForField } from "./field-prompts";
-import { resolveContactForInboundPhone } from "./resolve-contact-for-inbound";
+import { resolveInboundCaseAndContact } from "./resolve-inbound-case-and-contact";
 import { assertTransition, type OrchestrationState } from "./state-machine";
 
 function needsHumanAutoReplyEnabled(): boolean {
@@ -60,12 +61,15 @@ export async function processInboundMessaging(input: {
   providerMessageId?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const sb = serviceSupabase();
-  const resolved = await resolveContactForInboundPhone(input.fromE164, sb);
+  const resolved = await resolveInboundCaseAndContact(input.fromE164, sb);
   if (!resolved.ok) {
-    console.warn(`[pipeline] unknown_contact — no contact/reservation matches ${input.fromE164}`);
-    return { ok: false, error: "unknown_contact" };
+    console.warn(`[pipeline] inbound resolve failed: ${resolved.reason}`, {
+      fromE164: input.fromE164,
+    });
+    return { ok: false, error: resolved.reason };
   }
   const contact = mapContact(resolved.contactRaw);
+  let caseRow = mapCase(resolved.caseRaw);
 
   const resRes = await sb
     .from("reservations")
@@ -81,22 +85,6 @@ export async function processInboundMessaging(input: {
     return { ok: false, error: "reservation_not_found" };
   }
   const reservation = mapReservation(resRes.data as Record<string, unknown>);
-
-  const caseRows = takeRows<Record<string, unknown>>(
-    "case for reservation",
-    await sb
-      .from("cases")
-      .select("*")
-      .eq("reservation_id", reservation.id)
-      .order("created_at", { ascending: false })
-      .limit(1),
-  );
-  const caseRowRaw = caseRows[0];
-  if (!caseRowRaw) {
-    console.warn(`[pipeline] case_not_found for reservation ${reservation.id}`);
-    return { ok: false, error: "case_not_found" };
-  }
-  let caseRow = mapCase(caseRowRaw);
 
   assertNoError(
     "inbound message insert",
@@ -116,6 +104,19 @@ export async function processInboundMessaging(input: {
     channel: input.channel,
   });
 
+  const nowIso = new Date().toISOString();
+  assertNoError(
+    "case last customer message",
+    await sb
+      .from("cases")
+      .update({
+        last_customer_message_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq("id", caseRow.id),
+  );
+  caseRow = { ...caseRow, lastCustomerMessageAt: new Date(nowIso) };
+
   const whatsappTemplateContext =
     input.channel === "whatsapp"
       ? await resolveWhatsappTemplateContextForCase(
@@ -128,6 +129,40 @@ export async function processInboundMessaging(input: {
     input.channel === "whatsapp" &&
     whatsappTemplateContext &&
     !whatsappTemplateContext.allowsOperationalEnrichment;
+
+  const operationalTemplateReply =
+    input.channel === "whatsapp" &&
+    Boolean(whatsappTemplateContext?.allowsOperationalEnrichment);
+
+  if (
+    operationalTemplateReply &&
+    whatsappTemplateContext &&
+    (caseRow.caseStatus === "closed" ||
+      caseRow.orchestrationState === "cancelled" ||
+      caseRow.orchestrationState === "awaiting_d1" ||
+      caseRow.orchestrationState === "d1_confirm")
+  ) {
+    if (whatsappTemplateContext.phase !== "unknown") {
+      await advanceCaseForOperationalTemplateSend(
+        caseRow.id,
+        whatsappTemplateContext.phase,
+      );
+      const refreshed = await sb
+        .from("cases")
+        .select("*")
+        .eq("id", caseRow.id)
+        .maybeSingle();
+      if (refreshed.data) {
+        caseRow = mapCase(refreshed.data as Record<string, unknown>);
+      }
+    }
+  }
+
+  caseRow = await applyInboundExtractionToCaseRow(
+    caseRow,
+    reservation.id,
+    input.body,
+  );
 
   if (
     caseRow.caseStatus === "closed" ||
@@ -165,12 +200,6 @@ export async function processInboundMessaging(input: {
     reservationId: reservation.id,
     payload: { language: convLang, confidence: langDet.confidence },
   });
-
-  caseRow = await applyInboundExtractionToCaseRow(
-    caseRow,
-    reservation.id,
-    input.body,
-  );
 
   let outboundThisTurn = false;
 
