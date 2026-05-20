@@ -40,8 +40,11 @@ export const extractionFieldsSchema = z.object({
 
 export type ExtractionFields = z.infer<typeof extractionFieldsSchema>;
 
-/** After extraction — includes per-field confidence for case storage. */
-export type ExtractionResult = ExtractionFields & {
+/**
+ * Merged extraction patch (heuristic / LLM). Only set fields that were parsed;
+ * OpenAI uses full {@link ExtractionFields} with nulls via {@link extractionFieldsSchema}.
+ */
+export type ExtractionResult = Partial<ExtractionFields> & {
   confidence?: Record<string, number>;
 };
 

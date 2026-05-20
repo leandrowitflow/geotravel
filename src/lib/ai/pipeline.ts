@@ -96,12 +96,14 @@ export function resolveConversationLanguage(
   return toAssistantLocale(raw);
 }
 
-function stripNullExtractionFields(fields: ExtractionFields): ExtractionFields {
-  const out: Record<string, unknown> = {};
+function stripNullExtractionFields(fields: ExtractionFields): ExtractionResult {
+  const out: ExtractionResult = {};
   for (const [key, value] of Object.entries(fields)) {
-    if (value !== null) out[key] = value;
+    if (value !== null) {
+      (out as Record<string, unknown>)[key] = value;
+    }
   }
-  return out as ExtractionFields;
+  return out;
 }
 
 function assignExtractionConfidence(fields: ExtractionFields): ExtractionResult {

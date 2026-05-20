@@ -1,4 +1,7 @@
-import type { ExtractionResult } from "@/lib/contracts/extraction";
+import type {
+  ExtractionFields,
+  ExtractionResult,
+} from "@/lib/contracts/extraction";
 import type { ExtraItem } from "@/lib/contracts/extras-items";
 import type { CollectedDataJson } from "@/db/schema";
 
@@ -207,12 +210,12 @@ export function fillOperationalGapsFromHeuristic(
   const patch: ExtractionResult = { confidence: {} };
 
   const setIfMissing = (
-    key: keyof ExtractionResult,
+    key: keyof ExtractionFields,
     value: unknown,
     confKey?: string,
   ) => {
     if (value === undefined || value === null) return;
-    if (merged[key] != null) return;
+    if ((merged as Record<string, unknown>)[key] != null) return;
     (patch as Record<string, unknown>)[key] = value;
     if (heuristic.confidence?.[confKey ?? key]) {
       patch.confidence = patch.confidence ?? {};
