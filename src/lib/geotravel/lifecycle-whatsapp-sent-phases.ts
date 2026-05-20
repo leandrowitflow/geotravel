@@ -1,4 +1,5 @@
 import { takeRows } from "@/db/supabase-helpers";
+import type { CollectedDataJson } from "@/db/schema";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import {
   isGeotravelWhatsappLifecycleTemplate,
@@ -13,13 +14,19 @@ function externalBookingId(booking: GeotravelBooking): string {
   return booking.booking_reference?.trim() || String(booking.id);
 }
 
-/** Lifecycle template phases already sent on WhatsApp for this booking. */
-export async function getSentLifecyclePhasesForBooking(
+export type BookingCaseLifecycleState = {
+  caseId: string | null;
+  collectedData: CollectedDataJson | null;
+  outboundWhatsappCount: number;
+  lifecyclePhases: Set<GeotravelWhatsappLifecycleTemplate>;
+};
+
+async function loadBookingCaseLifecycleState(
   booking: GeotravelBooking,
-): Promise<Set<GeotravelWhatsappLifecycleTemplate>> {
+): Promise<BookingCaseLifecycleState> {
   const extId = externalBookingId(booking);
   const sb = serviceSupabase();
-  const sent = new Set<GeotravelWhatsappLifecycleTemplate>();
+  const lifecyclePhases = new Set<GeotravelWhatsappLifecycleTemplate>();
 
   const resRows = takeRows<{ id: string }>(
     "reservation for lifecycle sent check",
@@ -31,19 +38,36 @@ export async function getSentLifecyclePhasesForBooking(
       .limit(1),
   );
   const reservationPk = resRows[0]?.id;
-  if (!reservationPk) return sent;
+  if (!reservationPk) {
+    return {
+      caseId: null,
+      collectedData: null,
+      outboundWhatsappCount: 0,
+      lifecyclePhases,
+    };
+  }
 
-  const caseRows = takeRows<{ id: string }>(
+  const caseRows = takeRows<{
+    id: string;
+    collected_data: CollectedDataJson | null;
+  }>(
     "case for lifecycle sent check",
     await sb
       .from("cases")
-      .select("id")
+      .select("id,collected_data")
       .eq("reservation_id", reservationPk)
       .order("created_at", { ascending: false })
       .limit(1),
   );
-  const caseId = caseRows[0]?.id;
-  if (!caseId) return sent;
+  const caseRow = caseRows[0];
+  if (!caseRow?.id) {
+    return {
+      caseId: null,
+      collectedData: null,
+      outboundWhatsappCount: 0,
+      lifecyclePhases,
+    };
+  }
 
   const messages = takeRows<{
     body: string;
@@ -53,7 +77,7 @@ export async function getSentLifecyclePhasesForBooking(
     await sb
       .from("messages")
       .select("body,metadata")
-      .eq("case_id", caseId)
+      .eq("case_id", caseRow.id)
       .eq("direction", "outbound")
       .eq("channel", "whatsapp")
       .order("created_at", { ascending: true }),
@@ -65,14 +89,56 @@ export async function getSentLifecyclePhasesForBooking(
       typeof meta === "string" &&
       isGeotravelWhatsappLifecycleTemplate(meta)
     ) {
-      sent.add(meta);
+      lifecyclePhases.add(meta);
       continue;
     }
     const parsed = parseStoredOutboundTemplatePhase(m.body);
-    if (parsed && parsed !== "unknown" && isGeotravelWhatsappLifecycleTemplate(parsed)) {
-      sent.add(parsed);
+    if (
+      parsed &&
+      parsed !== "unknown" &&
+      isGeotravelWhatsappLifecycleTemplate(parsed)
+    ) {
+      lifecyclePhases.add(parsed);
     }
   }
 
-  return sent;
+  const collected = (caseRow.collected_data as CollectedDataJson) ?? null;
+
+  return {
+    caseId: caseRow.id,
+    collectedData: collected,
+    outboundWhatsappCount: messages.length,
+    lifecyclePhases,
+  };
+}
+
+/** Lifecycle template phases already sent on WhatsApp for this booking. */
+export async function getSentLifecyclePhasesForBooking(
+  booking: GeotravelBooking,
+): Promise<Set<GeotravelWhatsappLifecycleTemplate>> {
+  const state = await loadBookingCaseLifecycleState(booking);
+  return state.lifecyclePhases;
+}
+
+/**
+ * Inngest automation: one WhatsApp per case — skip if we already sent anything on this case.
+ */
+export async function bookingCaseAlreadyHadWhatsappSend(
+  booking: GeotravelBooking,
+): Promise<{ skip: boolean; reason?: string }> {
+  const state = await loadBookingCaseLifecycleState(booking);
+
+  if (state.collectedData?.lifecycle_automation_sent_at) {
+    return { skip: true, reason: "lifecycle_automation_already_recorded" };
+  }
+
+  if (state.outboundWhatsappCount > 0) {
+    return { skip: true, reason: "case_already_has_outbound_whatsapp" };
+  }
+
+  if (state.lifecyclePhases.size > 0) {
+    return { skip: true, reason: "lifecycle_template_already_sent" };
+  }
+
+  return { skip: false };
 }

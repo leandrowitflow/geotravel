@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
-import { lifecyclePhaseDueForSend } from "./run-lifecycle-whatsapp-automation";
+import { lifecyclePhaseForFirstAutomatedSend } from "./run-lifecycle-whatsapp-automation";
 import { HOURS_BEFORE_DATA } from "./select-booking-whatsapp-template";
 
 function booking(
@@ -17,25 +17,20 @@ function booking(
 
 const now = Date.parse("2026-05-19T12:00:00.000Z");
 
-describe("lifecyclePhaseDueForSend", () => {
-  it("returns welcome_1 when none sent and pickup >72h away", () => {
+describe("lifecyclePhaseForFirstAutomatedSend", () => {
+  it("returns welcome_1 when pickup >72h away", () => {
     const b = booking({ pickup_date_time: "2026-05-23T12:00:00.000Z" });
-    expect(lifecyclePhaseDueForSend(b, new Set(), now)).toBe("welcome_1");
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBe("welcome_1");
   });
 
   it("returns welcome_2 between 48h and 72h", () => {
     const b = booking({ pickup_date_time: "2026-05-21T14:00:00.000Z" });
-    expect(lifecyclePhaseDueForSend(b, new Set(), now)).toBe("welcome_2");
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBe("welcome_2");
   });
 
   it(`returns data within ${HOURS_BEFORE_DATA}h of pickup`, () => {
     const b = booking({ pickup_date_time: "2026-05-20T06:00:00.000Z" });
-    expect(lifecyclePhaseDueForSend(b, new Set(), now)).toBe("data");
-  });
-
-  it("skips phase already sent", () => {
-    const b = booking({ pickup_date_time: "2026-05-23T12:00:00.000Z" });
-    expect(lifecyclePhaseDueForSend(b, new Set(["welcome_1"]), now)).toBeNull();
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBe("data");
   });
 
   it("returns canceled when booking cancelled", () => {
@@ -43,6 +38,16 @@ describe("lifecyclePhaseDueForSend", () => {
       outcome: "Cancelled",
       pickup_date_time: "2026-05-23T12:00:00.000Z",
     });
-    expect(lifecyclePhaseDueForSend(b, new Set(), now)).toBe("canceled");
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBe("canceled");
+  });
+
+  it("returns null for satisfaction before delay after pickup", () => {
+    const b = booking({ pickup_date_time: "2026-05-19T11:00:00.000Z" });
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBeNull();
+  });
+
+  it("returns satisfaction after pickup delay", () => {
+    const b = booking({ pickup_date_time: "2026-05-18T12:00:00.000Z" });
+    expect(lifecyclePhaseForFirstAutomatedSend(b, now)).toBe("satisfaction");
   });
 });

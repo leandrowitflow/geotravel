@@ -72,6 +72,8 @@ export type GeotravelWelcomeSendOptions = {
   templateOverride?: GeotravelWhatsappLifecycleTemplate;
   /** When false, uses WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME from env (legacy). Default true for admin sends. */
   useLifecycleTemplates?: boolean;
+  /** Inngest pilot automation: marks case so cron does not send again (one message per case). */
+  fromLifecycleAutomation?: boolean;
 };
 
 export async function executeGeotravelWelcomeSend(
@@ -271,15 +273,42 @@ export async function executeGeotravelWelcomeSend(
       .maybeSingle();
     if (!caseRes.error && caseRes.data) {
       const collected = (caseRes.data.collected_data as CollectedDataJson) ?? {};
+      const merged = mergeLastWhatsappLifecyclePhase(collected, lifecyclePhase);
+      const withAutomation = options.fromLifecycleAutomation
+        ? {
+            ...merged,
+            lifecycle_automation_sent_at: new Date().toISOString(),
+            lifecycle_automation_phase: lifecyclePhase,
+          }
+        : merged;
       assertNoError(
         "geotravel case last template phase",
         await sb
           .from("cases")
           .update({
-            collected_data: mergeLastWhatsappLifecyclePhase(
-              collected,
-              lifecyclePhase,
-            ),
+            collected_data: withAutomation,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", ctx.caseId),
+      );
+    }
+  } else if (options.fromLifecycleAutomation && send.ok) {
+    const caseRes = await sb
+      .from("cases")
+      .select("collected_data")
+      .eq("id", ctx.caseId)
+      .maybeSingle();
+    if (!caseRes.error && caseRes.data) {
+      const collected = (caseRes.data.collected_data as CollectedDataJson) ?? {};
+      assertNoError(
+        "geotravel case lifecycle automation flag",
+        await sb
+          .from("cases")
+          .update({
+            collected_data: {
+              ...collected,
+              lifecycle_automation_sent_at: new Date().toISOString(),
+            },
             updated_at: new Date().toISOString(),
           })
           .eq("id", ctx.caseId),

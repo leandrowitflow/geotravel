@@ -15,6 +15,9 @@ export type CollectedDataJson = {
   last_confirmed_at?: string | null;
   /** Last Meta lifecycle phase sent on WhatsApp (welcome_1, canceled, …) for AI reply tone. */
   last_whatsapp_lifecycle_phase?: string | null;
+  /** Inngest lifecycle automation: at most one automated template send per case. */
+  lifecycle_automation_sent_at?: string | null;
+  lifecycle_automation_phase?: string | null;
 };
 
 export type ConsentJson = {

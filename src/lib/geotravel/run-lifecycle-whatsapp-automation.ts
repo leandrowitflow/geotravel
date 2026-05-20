@@ -6,7 +6,7 @@ import {
   lifecycleWhatsappAutomationEnabled,
   LIFECYCLE_INNGEST_PILOT_PHONE_DIGITS,
 } from "@/lib/geotravel/lifecycle-inngest-pilot";
-import { getSentLifecyclePhasesForBooking } from "@/lib/geotravel/lifecycle-whatsapp-sent-phases";
+import { bookingCaseAlreadyHadWhatsappSend } from "@/lib/geotravel/lifecycle-whatsapp-sent-phases";
 import {
   hoursUntilPickup,
   selectBookingWhatsappTemplate,
@@ -43,16 +43,14 @@ export type RunLifecycleWhatsappAutomationResult =
   | { ok: false; error: string };
 
 /**
- * Phase appropriate for right now that has not been sent yet.
+ * Phase to send on the case's first (and only) automated lifecycle message.
  */
-export function lifecyclePhaseDueForSend(
+export function lifecyclePhaseForFirstAutomatedSend(
   booking: GeotravelBooking,
-  alreadySent: ReadonlySet<GeotravelWhatsappLifecycleTemplate>,
   nowMs: number = Date.now(),
 ): GeotravelWhatsappLifecycleTemplate | null {
   const selection = selectBookingWhatsappTemplate(booking, nowMs);
   const phase = selection.phase;
-  if (alreadySent.has(phase)) return null;
 
   const hours = hoursUntilPickup(booking, nowMs);
   if (phase === "satisfaction") {
@@ -118,16 +116,28 @@ export async function runLifecycleWhatsappAutomation(): Promise<RunLifecycleWhat
 
   for (const booking of pilotBookings) {
     const ref = booking.booking_reference?.trim() ?? null;
-    const sent = await getSentLifecyclePhasesForBooking(booking);
-    const phase = lifecyclePhaseDueForSend(booking, sent, nowMs);
+    const currentPhase = selectBookingWhatsappTemplate(booking, nowMs).phase;
 
+    const already = await bookingCaseAlreadyHadWhatsappSend(booking);
+    if (already.skip) {
+      attempts.push({
+        bookingId: booking.id,
+        bookingRef: ref,
+        phase: currentPhase,
+        ok: true,
+        skipped: already.reason ?? "case_already_sent",
+      });
+      continue;
+    }
+
+    const phase = lifecyclePhaseForFirstAutomatedSend(booking, nowMs);
     if (!phase) {
       attempts.push({
         bookingId: booking.id,
         bookingRef: ref,
-        phase: selectBookingWhatsappTemplate(booking, nowMs).phase,
+        phase: currentPhase,
         ok: true,
-        skipped: "not_due_or_already_sent",
+        skipped: "not_due_yet",
       });
       continue;
     }
@@ -135,6 +145,7 @@ export async function runLifecycleWhatsappAutomation(): Promise<RunLifecycleWhat
     const result = await executeGeotravelWelcomeSend(booking, {
       useLifecycleTemplates: true,
       templateOverride: phase,
+      fromLifecycleAutomation: true,
     });
 
     if (result.ok) {
