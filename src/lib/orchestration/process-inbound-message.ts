@@ -10,15 +10,25 @@ import {
   cannedCrmHandoffAfterSyncFail,
   cannedNeedsHumanAck,
   cannedWhatsappCatchAllReply,
+  cannedWhatsappTemplateAwareReply,
   detectLanguageFromText,
   extractOperationalFields,
   generateInboundAssistantReply,
   generateWhatsappCatchAllReply,
   generateWhatsappEnrichmentAsk,
+  generateWhatsappTemplateAwareReply,
   mergeExtraction,
   naturalizeWhatsappReply,
   resolveConversationLanguage,
 } from "@/lib/ai/pipeline";
+import {
+  assistantFallbackFromPhone,
+  scriptedCommercialReturnTransfer,
+  scriptedConsentFutureComms,
+  scriptedEnrichmentCompleteAck,
+  scriptedSummarizeCorrectionAsk,
+} from "@/lib/ai/assistant-locale";
+import { resolveWhatsappTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
 import { buildCrmEnrichmentPayload } from "@/lib/crm/enrichment-payload";
 import { syncConfirmationToCrm, syncEnrichmentToCrm } from "@/lib/crm/sync-with-retry";
 import type { SupportedLanguage } from "@/lib/contracts/extraction";
@@ -106,9 +116,22 @@ export async function processInboundMessaging(input: {
     channel: input.channel,
   });
 
+  const whatsappTemplateContext =
+    input.channel === "whatsapp"
+      ? await resolveWhatsappTemplateContextForCase(
+          caseRow.id,
+          caseRow.collectedData,
+          sb,
+        )
+      : null;
+  const templateOnlyConversation =
+    input.channel === "whatsapp" &&
+    whatsappTemplateContext &&
+    !whatsappTemplateContext.allowsOperationalEnrichment;
+
   if (
     caseRow.caseStatus === "closed" ||
-    caseRow.orchestrationState === "cancelled"
+    (caseRow.orchestrationState === "cancelled" && !templateOnlyConversation)
   ) {
     return { ok: true };
   }
@@ -121,7 +144,8 @@ export async function processInboundMessaging(input: {
     langDet = { language: "en", confidence: 0.3 };
   }
   const preferred =
-    (contact.preferredLanguage as SupportedLanguage) || "en";
+    (contact.preferredLanguage as SupportedLanguage) ||
+    assistantFallbackFromPhone(contact.phone ?? reservation.sourcePhone);
   const convLang = resolveConversationLanguage(langDet, preferred);
   assertNoError(
     "contact language update",
@@ -193,6 +217,7 @@ export async function processInboundMessaging(input: {
           language: convLang,
           reservationSummary: reservationBlurb(),
           passengerName: reservation.customerName,
+          whatsappTemplateContext,
         });
         if (n) out = n;
       } catch (e) {
@@ -219,6 +244,7 @@ export async function processInboundMessaging(input: {
           bookingRef: reservation.externalBookingId,
           pickupSummary: pickupSummary || null,
           passengerName: reservation.customerName,
+          whatsappTemplateContext,
         });
       } catch (e) {
         console.warn("[processInboundMessaging] generateInboundAssistantReply failed:", e);
@@ -230,6 +256,43 @@ export async function processInboundMessaging(input: {
   }
 
   let state = caseRow.orchestrationState as OrchestrationState;
+
+  if (templateOnlyConversation && whatsappTemplateContext) {
+    let msg: string;
+    const useAi =
+      whatsappConversationFeaturesEnabled() && Boolean(process.env.OPENAI_API_KEY);
+    if (useAi) {
+      try {
+        msg =
+          (await generateWhatsappTemplateAwareReply({
+            userMessage: input.body,
+            language: convLang,
+            transcript: await loadTranscript(),
+            reservationSummary: reservationBlurb(),
+            bookingRef: reservation.externalBookingId,
+            passengerName: reservation.customerName,
+            whatsappTemplateContext,
+          })) ??
+          cannedWhatsappTemplateAwareReply(convLang, whatsappTemplateContext.phase);
+      } catch (e) {
+        console.warn(
+          "[processInboundMessaging] generateWhatsappTemplateAwareReply failed:",
+          e,
+        );
+        msg = cannedWhatsappTemplateAwareReply(
+          convLang,
+          whatsappTemplateContext.phase,
+        );
+      }
+    } else {
+      msg = cannedWhatsappTemplateAwareReply(
+        convLang,
+        whatsappTemplateContext.phase,
+      );
+    }
+    await deliverOutbound(msg, { skipNaturalize: true });
+    return { ok: true };
+  }
 
   if (state === "consent_future_comms") {
     const consent = recordConsentFromText(input.body, caseRow.consent ?? {});
@@ -296,17 +359,7 @@ export async function processInboundMessaging(input: {
         })
         .eq("id", caseRow.id),
     );
-    const text =
-      convLang === "pt"
-        ? "Podemos enviar lembretes úteis sobre o seu transfer por WhatsApp ou SMS no futuro? Responda SIM ou NÃO."
-        : convLang === "es"
-          ? "¿Podemos enviarle recordatorios útiles por WhatsApp o SMS en el futuro? Responda SÍ o NO."
-          : convLang === "fr"
-            ? "Pouvons-nous envoyer des rappels utiles par WhatsApp ou SMS ? Répondez OUI ou NON."
-            : convLang === "de"
-              ? "Dürfen wir später hilfreiche Erinnerungen per WhatsApp oder SMS senden? Antworten Sie JA oder NEIN."
-              : "May we send helpful reminders by WhatsApp or SMS in the future? Reply YES or NO.";
-    await deliverOutbound(text);
+    await deliverOutbound(scriptedConsentFutureComms(convLang));
     return { ok: true };
   }
 
@@ -379,11 +432,7 @@ export async function processInboundMessaging(input: {
         reservationId: reservation.id,
         payload: offer,
       });
-      const ack =
-        convLang === "pt"
-          ? "Obrigado. Vamos confirmar consigo no dia anterior à viagem."
-          : "Thank you. We will confirm with you the day before travel.";
-      await deliverOutbound(ack);
+      await deliverOutbound(scriptedEnrichmentCompleteAck(convLang));
       return { ok: true };
     }
     assertTransition(state, "collect_missing");
@@ -397,11 +446,7 @@ export async function processInboundMessaging(input: {
         })
         .eq("id", caseRow.id),
     );
-    const fix =
-      convLang === "pt"
-        ? "O que devemos corrigir? Responda com os detalhes."
-        : "What should we correct? Reply with the details.";
-    await deliverOutbound(fix);
+    await deliverOutbound(scriptedSummarizeCorrectionAsk(convLang));
     return { ok: true };
   }
 
@@ -511,6 +556,7 @@ export async function processInboundMessaging(input: {
             language: convLang,
             reservationSummary: reservationBlurb(),
             passengerName: reservation.customerName,
+            whatsappTemplateContext,
           });
           if (aiAsk) {
             replyBody = aiAsk;
@@ -571,6 +617,7 @@ export async function processInboundMessaging(input: {
             reservationSummary: reservationBlurb(),
             bookingRef: reservation.externalBookingId,
             passengerName: reservation.customerName,
+            whatsappTemplateContext,
           })) ?? cannedWhatsappCatchAllReply(convLang);
       } catch (e) {
         console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);
@@ -602,11 +649,7 @@ async function sendCommercialIfEligible(
       reservationId: reservation.id,
       payload: { type: "return_transfer" },
     });
-    const text =
-      convLang === "pt"
-        ? "Quer que reservemos também o transfer de regresso?"
-        : "Would you like us to arrange your return transfer as well?";
-    await deliver(text);
+    await deliver(scriptedCommercialReturnTransfer(convLang));
   }
   assertTransition(
     caseRow.orchestrationState as OrchestrationState,
@@ -698,7 +741,7 @@ function formatSummary(data: CollectedDataJson, lang: SupportedLanguage): string
     `${lang === "pt" ? "Notas" : "Notes"}: ${data.additional_notes ?? "—"}`,
     lang === "pt"
       ? "Está tudo correto? Responda SIM ou NÃO."
-      : "Is this correct? Reply YES or NO.",
+      : "Is this correct? Please reply YES or NO.",
   ];
   return lines.join("\n");
 }
