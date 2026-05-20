@@ -58,24 +58,34 @@ export function buildBookingWhatsappTemplateVariables(
     return undefined;
   }
 
-  const common = {
-    operator: operatorLabel(),
-    plateform: templatePlateform(booking),
-    booking_reference: templateBookingReference(booking),
-    pickup_date_time: formatBookingPickupDateTimeForTemplate(
-      booking.pickup_date_time,
-    ),
-  };
+  const operator = operatorLabel();
+  const plateform = templatePlateform(booking);
+  const booking_reference = templateBookingReference(booking);
+  const pickup_date_time = formatBookingPickupDateTimeForTemplate(
+    booking.pickup_date_time,
+  );
 
+  /** welcome_1 / welcome_2 / canceled — run `npm run whatsapp:template-params` */
   if (name === "welcome_1" || name === "welcome_2" || name === "canceled") {
-    return common;
+    return {
+      operator,
+      plateform,
+      booking_reference,
+      pickup_date_time,
+    };
   }
 
+  /**
+   * data — Meta body uses cities + datetime only (no booking_reference on WABA).
+   * named vars: operator, plateform, pickup_city, dropoff_city, pickup_date_time
+   */
   if (name === "data") {
     return {
-      ...common,
+      operator,
+      plateform,
       pickup_city: templateCity(booking.pickup_city, booking.pickup_address),
       dropoff_city: templateCity(booking.dropoff_city, booking.dropoff_address),
+      pickup_date_time,
     };
   }
 
