@@ -1,5 +1,6 @@
 import { assertNoError } from "@/db/supabase-helpers";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
+import { buildBookingWhatsappTemplateVariables } from "@/lib/geotravel/build-booking-whatsapp-template-variables";
 import {
   buildBookingWelcomeTemplateBody,
   buildGeotravelWhatsAppConfirmationMessage,
@@ -7,6 +8,7 @@ import {
 } from "@/lib/geotravel/geotravel-confirmation-message";
 import {
   type GeotravelWhatsappLifecycleTemplate,
+  resolveMetaTemplateName,
   selectBookingWhatsappTemplate,
 } from "@/lib/geotravel/select-booking-whatsapp-template";
 import { resolveBookingTemplateFirstName } from "@/lib/geotravel/resolve-booking-template-first-name";
@@ -93,14 +95,16 @@ export async function executeGeotravelWelcomeSend(
   const selection = useLifecycle
     ? selectBookingWhatsappTemplate(booking)
     : null;
-  const templateName = options.templateOverride
-    ? options.templateOverride
-    : useLifecycle
-      ? selection!.templateName
-      : process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim() ||
-        "booking_confirmation";
-  const templateLanguageCode =
-    resolveBookingConfirmTemplateLanguage(templateName);
+  const lifecyclePhase: GeotravelWhatsappLifecycleTemplate | undefined =
+    options.templateOverride ?? selection?.phase;
+  const templateName = lifecyclePhase
+    ? resolveMetaTemplateName(lifecyclePhase)
+    : process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim() ||
+      "booking_confirmation";
+  const templateLanguageCode = resolveBookingConfirmTemplateLanguage(
+    templateName,
+    { booking, destinationE164: to },
+  );
 
   const forceSms = envTruthy("GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS");
   const preferred: "whatsapp" | "sms" = forceSms
@@ -114,8 +118,17 @@ export async function executeGeotravelWelcomeSend(
     ctx.reservationPk,
     booking,
   );
-  const welcomeBody = buildBookingWelcomeTemplateBody(firstName);
   const useWaTemplate = preferred === "whatsapp" && Boolean(templateName);
+  const templateVariables = useWaTemplate
+    ? buildBookingWhatsappTemplateVariables(booking, templateName, firstName)
+    : undefined;
+  const welcomeBody = useWaTemplate
+    ? templateVariables
+      ? `[WhatsApp template: ${templateName}]\n${Object.entries(templateVariables)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n")}`
+      : `[WhatsApp template: ${templateName}]`
+    : buildBookingWelcomeTemplateBody(firstName);
 
   const send = await sendViaPreferredChannel({
     caseId: ctx.caseId,
@@ -124,7 +137,7 @@ export async function executeGeotravelWelcomeSend(
     toE164: to,
     body: useWaTemplate ? welcomeBody : longBodyText,
     templateName: useWaTemplate ? templateName : undefined,
-    templateVariables: useWaTemplate ? { first_name: firstName } : undefined,
+    templateVariables,
     templateLanguageCode,
   });
 
@@ -148,6 +161,17 @@ export async function executeGeotravelWelcomeSend(
                     ? templateName
                       ? (() => {
                           const err = send.error ?? "";
+                          const is132000 =
+                            /132000|Number of parameters does not match/i.test(
+                              err,
+                            );
+                          if (is132000) {
+                            return [
+                              `Error 132000: parameter count/name mismatch for template "${templateName}".`,
+                              "Run: npm run whatsapp:template-params — variables must match each template body.",
+                              "welcome_1/2/canceled need operator, plateform, booking_reference, pickup_date_time; data adds pickup_city, dropoff_city; satisfaction needs none; booking_confirmation needs first_name only.",
+                            ].join(" ");
+                          }
                           const is132001 = /132001|does not exist in the translation/i.test(
                             err,
                           );
@@ -160,17 +184,28 @@ export async function executeGeotravelWelcomeSend(
                               "Run: npm run whatsapp:list-templates — only use name + language rows that appear there.",
                             ].join(" ");
                           }
+                          const is131030 =
+                            /131030|not in allowed list|Recipient phone number not in allowed/i.test(
+                              err,
+                            );
+                          if (is131030) {
+                            return [
+                              `Meta error 131030: ${to} is not on this app's test recipient list (development mode).`,
+                              "Meta → App → WhatsApp → API Setup → manage test numbers: remove +351966915976 and re-add with SMS verification.",
+                              "API must use full international digits (351966915976), not national-only 966915976.",
+                              "Run: npm run whatsapp:send-probe — compares 966 vs 930 on hello_world.",
+                            ].join(" ");
+                          }
                           const is131005 =
                             /131005|OAuthException.*Access denied|Access denied/i.test(
                               err,
                             );
                           if (is131005) {
                             return [
-                              "Meta error 131005 (Access denied / OAuthException): the access token cannot send for this WhatsApp Business phone.",
-                              "Typical fixes: (1) Use a System User permanent token (or a valid long-lived token) with whatsapp_business_messaging and whatsapp_business_management.",
-                              "(2) In Business Settings, assign that System User to your WABA and to this phone number asset.",
-                              "(3) Confirm WHATSAPP_PHONE_NUMBER_ID in Vercel matches the number under the same Meta app as the token.",
-                              "Debug the token: https://developers.facebook.com/tools/debug/accesstoken/",
+                              `Meta error 131005 for destination ${to}.`,
+                              "If other pilot numbers (e.g. 930) still work, the token is fine — re-verify this number in Meta test recipients or check the handset has not blocked the test business.",
+                              "Remove +351966915976 from API Setup test list, re-add, confirm SMS, then send hello_world to that number on Meta's page first.",
+                              "Run: npm run whatsapp:send-probe",
                             ].join(" ");
                           }
                           const is190 =
@@ -199,8 +234,8 @@ export async function executeGeotravelWelcomeSend(
   }
 
   const messageBodyForStore =
-    send.ok && send.channel === "whatsapp" && useWaTemplate && templateName
-      ? `[WhatsApp template: ${templateName}]\n${welcomeBody}`
+    send.ok && send.channel === "whatsapp" && useWaTemplate
+      ? welcomeBody
       : longBodyText;
 
   assertNoError(
@@ -241,7 +276,7 @@ export async function executeGeotravelWelcomeSend(
     providerMessageId: send.providerMessageId,
     templateUsed: useWaTemplate,
     templateName: useWaTemplate ? templateName : undefined,
-    templatePhase: useLifecycle ? selection?.phase : undefined,
+    templatePhase: lifecyclePhase,
     templateSelectionReason: options.templateOverride
       ? `Manual test: ${options.templateOverride}`
       : selection?.reason,

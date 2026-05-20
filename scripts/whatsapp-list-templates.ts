@@ -90,19 +90,38 @@ async function main() {
     );
   }
 
-  const welcome = filtered.filter((r) => r.name === "welcome_1");
-  if (welcome.length > 0) {
-    console.log("\nFor welcome_1, set in .env.local:");
-    for (const r of welcome) {
-      if (r.status === "APPROVED") {
-        console.log(
-          `  WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME=welcome_1`,
-        );
-        console.log(
-          `  WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE=${r.language}`,
-        );
-      }
+  const lifecycle = [
+    "welcome_1",
+    "welcome_2",
+    "data",
+    "canceled",
+    "satisfaction",
+  ] as const;
+  const approvedByName = new Map<string, string>();
+  for (const r of rows) {
+    if (r.status === "APPROVED" && r.name && r.language) {
+      approvedByName.set(r.name, r.language);
     }
+  }
+  const missing = lifecycle.filter((n) => !approvedByName.has(n));
+  const present = lifecycle.filter((n) => approvedByName.has(n));
+  if (present.length > 0) {
+    console.log("\nLifecycle templates on this WABA (app sends phase → same Meta name):");
+    for (const n of present) {
+      console.log(`  ${n} → language ${approvedByName.get(n)}`);
+    }
+  }
+  if (missing.length > 0) {
+    console.log(
+      "\nLifecycle templates NOT returned by API for this WABA (sends will 132001 until listed here):",
+      missing.join(", "),
+    );
+    console.log(
+      "  If they show as active in WhatsApp Manager, confirm WHATSAPP_BUSINESS_ACCOUNT_ID matches that account.",
+    );
+    console.log(
+      "  Temporary workaround: WHATSAPP_LIFECYCLE_FALLBACK_TEMPLATE=booking_confirmation in .env.local",
+    );
   }
 }
 

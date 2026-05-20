@@ -75,14 +75,17 @@ export function SendGeotravelWhatsAppButton({
         });
         return;
       }
-      const tpl = j.templateName ?? templateOverride ?? "auto";
+      const phase = j.templatePhase ?? templateOverride ?? "auto";
+      const meta = j.templateName;
+      const tplLabel =
+        meta && phase !== "auto" && meta !== phase ? `${phase} → ${meta}` : meta ?? phase;
       const when = formatHoursUntilPickup(
         j.hoursUntilPickup ?? autoSelection.hoursUntilPickup,
       );
       setMsg({
         tone: "ok",
         text: [
-          `Sent ${tpl} (${j.templateLanguageSent ?? "en"}) via ${j.channel ?? "WhatsApp"} to ${j.destinationE164 ?? "?"}.`,
+          `Sent ${tplLabel} (${j.templateLanguageSent ?? "en"}) via ${j.channel ?? "WhatsApp"} to ${j.destinationE164 ?? "?"}.`,
           j.templateSelectionReason ? `(${j.templateSelectionReason}, ${when})` : null,
           j.whatsappFallbackToSms && j.whatsappAttemptError
             ? `WhatsApp failed: ${j.whatsappAttemptError}`
@@ -104,11 +107,15 @@ export function SendGeotravelWhatsAppButton({
         disabled={pending !== null}
         onClick={() => void send()}
         className="rounded border border-teal-600 bg-teal-50 px-2 py-1 text-[11px] font-medium text-teal-900 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-500 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40"
-        title={autoSelection.reason}
+        title={
+          autoSelection.metaTemplateName === autoSelection.phase
+            ? autoSelection.reason
+            : `${autoSelection.reason} → Meta: ${autoSelection.metaTemplateName}`
+        }
       >
         {pending === "auto"
           ? "Sending…"
-          : `WhatsApp · ${autoSelection.templateName}`}
+          : `WhatsApp · ${autoSelection.phase} (${autoSelection.language})`}
       </button>
       <p className="text-[10px] leading-snug text-stone-500 dark:text-stone-400">
         Auto: {autoSelection.reason} ({formatHoursUntilPickup(autoSelection.hoursUntilPickup)}).
@@ -122,7 +129,7 @@ export function SendGeotravelWhatsAppButton({
             disabled={pending !== null}
             onClick={() => void send(t)}
             className="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-            title={`Force Meta template ${t} (en)`}
+            title={`Force ${t} (${autoSelection.language} on PT phones, en otherwise)`}
           >
             {pending === t ? "…" : TEMPLATE_LABELS[t]}
           </button>

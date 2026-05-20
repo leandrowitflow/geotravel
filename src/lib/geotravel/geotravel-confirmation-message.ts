@@ -1,33 +1,28 @@
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import type { SupportedLanguage } from "@/lib/contracts/extraction";
-import { isGeotravelWhatsappLifecycleTemplate } from "@/lib/geotravel/select-booking-whatsapp-template";
+import {
+  resolveWhatsappTemplateLanguage,
+  type WhatsappTemplateLanguageContext,
+} from "@/lib/geotravel/resolve-whatsapp-template-language";
 import { buildInitialOutreachMessage } from "@/lib/orchestration/outreach-first-message";
 
 /**
  * Meta template for admin “WhatsApp confirm” (exact name on your WABA — run npm run whatsapp:list-templates).
- * Use welcome_1 only after it appears as APPROVED on the same WABA as WHATSAPP_BUSINESS_ACCOUNT_ID.
+ * Lifecycle phases use the same Meta template name as the phase (see resolveMetaTemplateName).
  */
 export const DEFAULT_WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME = "booking_confirmation";
 
 /**
- * Language code for booking welcome template sends (must match npm run whatsapp:list-templates).
- * booking_confirmation on our WABA uses `en`; hello_world uses en_US.
+ * Meta language for template sends (`en` or `pt_PT` when the passenger phone is Portuguese).
  */
 export function resolveBookingConfirmTemplateLanguage(
   templateName?: string,
+  context?: WhatsappTemplateLanguageContext,
 ): string {
-  if (templateName && isGeotravelWhatsappLifecycleTemplate(templateName)) {
-    return "en";
-  }
-  const specific = process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE?.trim();
-  if (specific) return specific;
-  const name =
-    templateName?.trim() ||
-    process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim() ||
-    DEFAULT_WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME;
-  if (name === "booking_confirmation") return "en";
-  return process.env.WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE?.trim() || "en_US";
+  return resolveWhatsappTemplateLanguage(templateName, context);
 }
+
+export type { WhatsappTemplateLanguageContext } from "@/lib/geotravel/resolve-whatsapp-template-language";
 
 /** Pilot: admin “WhatsApp confirm” only for rows whose phone digits include this (national PT). */
 export const WHATSAPP_PILOT_PHONE_DIGITS = "966915976";

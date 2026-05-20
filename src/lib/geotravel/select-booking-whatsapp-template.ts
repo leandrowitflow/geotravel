@@ -1,6 +1,8 @@
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
+import { resolveWhatsappTemplateLanguage } from "@/lib/geotravel/resolve-whatsapp-template-language";
+import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 
-/** Meta template names (all use language `en` on our WABA). */
+/** Meta template names (language `en` or `pt_PT` per passenger phone). */
 export const GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES = [
   "welcome_1",
   "welcome_2",
@@ -19,7 +21,29 @@ export type GeotravelWhatsappTemplatePhase =
   | "canceled"
   | "satisfaction";
 
-export const GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE = "en" as const;
+export const GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE_EN = "en" as const;
+
+function lifecycleMetaTemplateEnvKey(
+  phase: GeotravelWhatsappLifecycleTemplate,
+): string {
+  return `WHATSAPP_META_TEMPLATE_${phase.replace(/-/g, "_").toUpperCase()}`;
+}
+
+/**
+ * Meta API template name for a lifecycle phase.
+ * Default: same name as the phase (`welcome_1`, `data`, …).
+ * Per-phase override: WHATSAPP_META_TEMPLATE_WELCOME_1=other_name
+ * Force one template for all phases (dev / missing templates): WHATSAPP_LIFECYCLE_FALLBACK_TEMPLATE=booking_confirmation
+ */
+export function resolveMetaTemplateName(
+  phase: GeotravelWhatsappLifecycleTemplate,
+): string {
+  const specific = process.env[lifecycleMetaTemplateEnvKey(phase)]?.trim();
+  if (specific) return specific;
+  const forceAll = process.env.WHATSAPP_LIFECYCLE_FALLBACK_TEMPLATE?.trim();
+  if (forceAll) return forceAll;
+  return phase;
+}
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 const HOURS_BEFORE_WELCOME_2 = 72;
@@ -52,9 +76,11 @@ export function hoursUntilPickup(
 }
 
 export type SelectedBookingWhatsappTemplate = {
+  /** Logical lifecycle phase (admin UI / scheduling). */
   phase: GeotravelWhatsappTemplatePhase;
-  templateName: GeotravelWhatsappLifecycleTemplate;
-  language: typeof GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE;
+  /** Actual Meta template name on this WABA (see resolveMetaTemplateName). */
+  metaTemplateName: string;
+  language: string;
   hoursUntilPickup: number | null;
   /** Short label for admin UI */
   reason: string;
@@ -74,51 +100,60 @@ export function selectBookingWhatsappTemplate(
   nowMs: number = Date.now(),
 ): SelectedBookingWhatsappTemplate {
   const hours = hoursUntilPickup(booking, nowMs);
+  const destinationE164 = normalizeGeotravelPhoneToE164(booking.passenger_phone, {
+    defaultCountryCode: "351",
+  });
+  const langCtx = { booking, destinationE164 };
 
   if (isBookingCancelledForWhatsapp(booking)) {
+    const phase = "canceled";
     return {
-      phase: "canceled",
-      templateName: "canceled",
-      language: GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE,
+      phase,
+      metaTemplateName: resolveMetaTemplateName(phase),
+      language: resolveWhatsappTemplateLanguage(phase, langCtx),
       hoursUntilPickup: hours,
       reason: "Booking is cancelled",
     };
   }
 
   if (hours !== null && hours < 0) {
+    const phase = "satisfaction";
     return {
-      phase: "satisfaction",
-      templateName: "satisfaction",
-      language: GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE,
+      phase,
+      metaTemplateName: resolveMetaTemplateName(phase),
+      language: resolveWhatsappTemplateLanguage(phase, langCtx),
       hoursUntilPickup: hours,
       reason: "Pickup time has passed",
     };
   }
 
   if (hours !== null && hours <= HOURS_BEFORE_DATA) {
+    const phase = "data";
     return {
-      phase: "data",
-      templateName: "data",
-      language: GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE,
+      phase,
+      metaTemplateName: resolveMetaTemplateName(phase),
+      language: resolveWhatsappTemplateLanguage(phase, langCtx),
       hoursUntilPickup: hours,
       reason: `Within ${HOURS_BEFORE_DATA}h of pickup`,
     };
   }
 
   if (hours !== null && hours < HOURS_BEFORE_WELCOME_2) {
+    const phase = "welcome_2";
     return {
-      phase: "welcome_2",
-      templateName: "welcome_2",
-      language: GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE,
+      phase,
+      metaTemplateName: resolveMetaTemplateName(phase),
+      language: resolveWhatsappTemplateLanguage(phase, langCtx),
       hoursUntilPickup: hours,
       reason: `Less than ${HOURS_BEFORE_WELCOME_2}h until pickup`,
     };
   }
 
+  const phase = "welcome_1";
   return {
-    phase: "welcome_1",
-    templateName: "welcome_1",
-    language: GEOTRAVEL_WHATSAPP_TEMPLATE_LANGUAGE,
+    phase,
+    metaTemplateName: resolveMetaTemplateName(phase),
+    language: resolveWhatsappTemplateLanguage(phase, langCtx),
     hoursUntilPickup: hours,
     reason:
       hours === null

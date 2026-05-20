@@ -39,8 +39,20 @@ describe("resolveBookingConfirmTemplateLanguage", () => {
     expect(resolveBookingConfirmTemplateLanguage()).toBe("en");
   });
 
-  it("uses en for lifecycle templates", () => {
-    expect(resolveBookingConfirmTemplateLanguage("welcome_2")).toBe("en");
+  it("uses pt_PT for lifecycle templates on Portuguese phones", () => {
+    expect(
+      resolveBookingConfirmTemplateLanguage("welcome_2", {
+        destinationE164: "+351966915976",
+      }),
+    ).toBe("pt_PT");
+  });
+
+  it("uses en for lifecycle templates on non-PT phones", () => {
+    expect(
+      resolveBookingConfirmTemplateLanguage("welcome_2", {
+        destinationE164: "+14155550123",
+      }),
+    ).toBe("en");
   });
 
   it("uses WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE for non-booking_confirmation templates", () => {
