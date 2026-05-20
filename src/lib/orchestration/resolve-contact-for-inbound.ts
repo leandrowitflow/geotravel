@@ -48,6 +48,18 @@ export function canonicalInboundPhoneCandidates(fromE164: string): string[] {
   return [...out];
 }
 
+/**
+ * Meta webhook `messages[].from` (digits only, no +) → canonical E.164 for lookups.
+ * Applies PT national rules so `966915976` becomes `+351966915976`, not Saudi `+966…`.
+ */
+export function canonicalizeInboundWebhookFrom(fromRaw: string): string | null {
+  const trimmed = fromRaw.trim();
+  if (!trimmed) return null;
+  const e164 = primaryCanonicalInboundPhone(trimmed);
+  if (digitsOnlyPhone(e164).length < 8) return null;
+  return e164;
+}
+
 /** Preferred single E.164 to store on `contacts.phone` when healing. */
 export function primaryCanonicalInboundPhone(fromE164: string): string {
   const cc = defaultCountryCode();

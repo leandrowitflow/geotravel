@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalInboundPhoneCandidates,
+  canonicalizeInboundWebhookFrom,
   digitsOnlyPhone,
   normalizeMessagingE164,
   primaryCanonicalInboundPhone,
@@ -16,6 +17,13 @@ describe("normalizeMessagingE164", () => {
 describe("digitsOnlyPhone", () => {
   it("strips non-digits", () => {
     expect(digitsOnlyPhone("+351-966-915-976")).toBe("351966915976");
+  });
+});
+
+describe("canonicalizeInboundWebhookFrom", () => {
+  it("maps Meta from field to +351 for PT national", () => {
+    expect(canonicalizeInboundWebhookFrom("966915976")).toBe("+351966915976");
+    expect(canonicalizeInboundWebhookFrom("351966915976")).toBe("+351966915976");
   });
 });
 

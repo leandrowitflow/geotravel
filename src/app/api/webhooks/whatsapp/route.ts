@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { processInboundMessaging } from "@/lib/orchestration/process-inbound-message";
+import { canonicalizeInboundWebhookFrom } from "@/lib/orchestration/resolve-contact-for-inbound";
 
 /**
  * Extend allowed wall-clock time so the background pipeline (after()) has room.
@@ -150,9 +151,8 @@ function extractFirstInboundUserText(payload: unknown): {
           m.from != null && m.from !== "" ? String(m.from).trim() : "";
         const body = inboundBodyFromMessage(m);
         if (!fromRaw || !body) continue;
-        const digits = fromRaw.replace(/\D/g, "");
-        if (digits.length < 8) continue;
-        const fromE164 = `+${digits}`;
+        const fromE164 = canonicalizeInboundWebhookFrom(fromRaw);
+        if (!fromE164) continue;
         return {
           fromE164,
           body,
@@ -186,7 +186,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  after(async () => {
+  const runInbound = async () => {
     try {
       const result = await processInboundMessaging({
         channel: "whatsapp",
@@ -195,12 +195,28 @@ export async function POST(req: Request) {
         providerMessageId: inbound.providerMessageId,
       });
       if (!result.ok) {
-        console.warn("[whatsapp webhook] inbound not stored:", result.error, { fromE164: inbound.fromE164 });
+        console.warn("[whatsapp webhook] pipeline:", result.error, {
+          fromE164: inbound.fromE164,
+          bodyPreview: inbound.body.slice(0, 80),
+        });
+      } else {
+        console.info("[whatsapp webhook] processed inbound", {
+          fromE164: inbound.fromE164,
+        });
       }
     } catch (e) {
       console.error("[whatsapp webhook] processInboundMessaging failed:", e);
     }
-  });
+  };
+
+  const awaitProcessing =
+    process.env.WHATSAPP_WEBHOOK_AWAIT_PROCESSING?.trim().toLowerCase() ===
+    "true";
+  if (awaitProcessing) {
+    await runInbound();
+  } else {
+    after(runInbound);
+  }
 
   return NextResponse.json({ ok: true });
 }
