@@ -3,7 +3,12 @@ import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
 import {
   buildBookingWelcomeTemplateBody,
   buildGeotravelWhatsAppConfirmationMessage,
+  resolveBookingConfirmTemplateLanguage,
 } from "@/lib/geotravel/geotravel-confirmation-message";
+import {
+  type GeotravelWhatsappLifecycleTemplate,
+  selectBookingWhatsappTemplate,
+} from "@/lib/geotravel/select-booking-whatsapp-template";
 import { resolveBookingTemplateFirstName } from "@/lib/geotravel/resolve-booking-template-first-name";
 import { ensureReservationCaseFromGeotravel } from "@/lib/geotravel/sync-geotravel-booking-to-case";
 import {
@@ -31,6 +36,9 @@ export type GeotravelWelcomeSendSuccess = {
   providerMessageId: string | null;
   templateUsed: boolean;
   templateName?: string;
+  templatePhase?: string;
+  templateSelectionReason?: string;
+  hoursUntilPickup?: number | null;
   templateLanguageSent?: string;
   firstNameUsed?: string;
   whatsappFallbackToSms: boolean;
@@ -54,9 +62,18 @@ export type GeotravelWelcomeSendResult =
  * Syncs reservation/case from the booking row, sends welcome (template when configured),
  * stores outbound message, and may advance orchestration from awaiting_outreach.
  */
+export type GeotravelWelcomeSendOptions = {
+  /** Staff testing: force a lifecycle template (welcome_1, welcome_2, data, canceled, satisfaction). */
+  templateOverride?: GeotravelWhatsappLifecycleTemplate;
+  /** When false, uses WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME from env (legacy). Default true for admin sends. */
+  useLifecycleTemplates?: boolean;
+};
+
 export async function executeGeotravelWelcomeSend(
   booking: GeotravelBooking,
+  options: GeotravelWelcomeSendOptions = {},
 ): Promise<GeotravelWelcomeSendResult> {
+  const useLifecycle = options.useLifecycleTemplates !== false;
   let ctx;
   try {
     ctx = await ensureReservationCaseFromGeotravel(booking);
@@ -73,9 +90,17 @@ export async function executeGeotravelWelcomeSend(
     return { ok: false, status: 400, body: { error: "no_phone" } };
   }
 
-  const templateName = process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim();
+  const selection = useLifecycle
+    ? selectBookingWhatsappTemplate(booking)
+    : null;
+  const templateName = options.templateOverride
+    ? options.templateOverride
+    : useLifecycle
+      ? selection!.templateName
+      : process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_NAME?.trim() ||
+        "booking_confirmation";
   const templateLanguageCode =
-    process.env.WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE?.trim() || "en";
+    resolveBookingConfirmTemplateLanguage(templateName);
 
   const forceSms = envTruthy("GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS");
   const preferred: "whatsapp" | "sms" = forceSms
@@ -127,7 +152,13 @@ export async function executeGeotravelWelcomeSend(
                             err,
                           );
                           if (is132001) {
-                            return `Error 132001: Meta has no translation for template "${templateName}" + language "${templateLanguageCode}". Copy the exact language code from WhatsApp Manager (often en or en_US for English). Set WHATSAPP_BOOKING_CONFIRM_TEMPLATE_LANGUAGE — this app defaults to en when unset.`;
+                            return [
+                              `Error 132001: Meta has no "${templateName}" template for language "${templateLanguageCode}" on this WhatsApp Business Account.`,
+                              "This is not caused by “Qualidade pendente” in the UI — booking_confirmation can show the same and still send.",
+                              "Usually the template name/language is missing from the API for this WABA (wrong Meta business, typo, or template only in the dashboard but not on account",
+                              `${process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ?? "WHATSAPP_BUSINESS_ACCOUNT_ID"}).`,
+                              "Run: npm run whatsapp:list-templates — only use name + language rows that appear there.",
+                            ].join(" ");
                           }
                           const is131005 =
                             /131005|OAuthException.*Access denied|Access denied/i.test(
@@ -210,6 +241,11 @@ export async function executeGeotravelWelcomeSend(
     providerMessageId: send.providerMessageId,
     templateUsed: useWaTemplate,
     templateName: useWaTemplate ? templateName : undefined,
+    templatePhase: useLifecycle ? selection?.phase : undefined,
+    templateSelectionReason: options.templateOverride
+      ? `Manual test: ${options.templateOverride}`
+      : selection?.reason,
+    hoursUntilPickup: selection?.hoursUntilPickup ?? null,
     templateLanguageSent: useWaTemplate ? templateLanguageCode : undefined,
     firstNameUsed: useWaTemplate ? firstName : undefined,
     whatsappFallbackToSms: Boolean(send.whatsappErrorBeforeSmsFallback),

@@ -7,6 +7,7 @@ import {
   whatsappPilotAllowSubstrings,
 } from "@/lib/geotravel/geotravel-confirmation-message";
 import { executeGeotravelWelcomeSend } from "@/lib/geotravel/execute-geotravel-welcome-send";
+import { GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES } from "@/lib/geotravel/select-booking-whatsapp-template";
 
 /** Loose schema: admin sends the row JSON from /admin/bookings. */
 const bookingSchema = z
@@ -48,6 +49,7 @@ const bookingSchema = z
 
 const bodySchema = z.object({
   booking: bookingSchema,
+  templateOverride: z.enum(GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES).optional(),
 });
 
 export async function POST(req: Request) {
@@ -69,13 +71,16 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error: "not_eligible",
-        hint: `Only Active + CONFIRMED rows whose passenger phone matches a pilot digit substring (${whatsappPilotAllowSubstrings().slice(0, 4).join(", ")}${whatsappPilotAllowSubstrings().length > 4 ? ", …" : ""}). Set GEOTRAVEL_WHATSAPP_PILOT_PHONE_SUBSTRINGS to add more.`,
+        hint: `Pilot phones only (${whatsappPilotAllowSubstrings().join(", ")}). Set GEOTRAVEL_WHATSAPP_PILOT_PHONE_SUBSTRINGS to add more.`,
       },
       { status: 400 },
     );
   }
 
-  const result = await executeGeotravelWelcomeSend(booking);
+  const result = await executeGeotravelWelcomeSend(booking, {
+    templateOverride: parsed.data.templateOverride,
+    useLifecycleTemplates: true,
+  });
   if (!result.ok) {
     return NextResponse.json(result.body, { status: result.status });
   }
@@ -86,6 +91,9 @@ export async function POST(req: Request) {
     providerMessageId: result.providerMessageId,
     templateUsed: result.templateUsed,
     templateName: result.templateName,
+    templatePhase: result.templatePhase,
+    templateSelectionReason: result.templateSelectionReason,
+    hoursUntilPickup: result.hoursUntilPickup,
     templateLanguageSent: result.templateLanguageSent,
     firstNameUsed: result.firstNameUsed,
     whatsappFallbackToSms: result.whatsappFallbackToSms,
