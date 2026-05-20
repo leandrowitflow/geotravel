@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CaseActions } from "@/app/admin/cases/[id]/case-actions";
+import { CaseConversationThread } from "@/components/admin/case-conversation-thread";
 import { CollectedDataConsentPanel } from "@/components/admin/collected-data-consent-panel";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { getCaseDetail } from "@/lib/admin/queries";
@@ -79,75 +81,43 @@ export default async function CaseDetailPage({
       >
         <h2 className="text-lg font-medium text-stone-900 dark:text-stone-50">Conversation</h2>
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-          Oldest first — customer on the left, assistant &amp; templates on the right.
+          Oldest first — customer on the left, Geotravel on the right. Template
+          messages show the approved WhatsApp wording customers receive, not the
+          internal variable dump.
         </p>
-        {messages.length === 0 ? (
-          <p className="mt-4 text-sm text-stone-400 dark:text-stone-500">No messages yet.</p>
-        ) : (
-          <ol className="mt-4 space-y-1">
-            {messages.map((m, i) => {
-              const inbound = m.direction === "inbound";
-              const isTemplate = !inbound && m.body.startsWith("[WhatsApp template:");
-              const displayBody = isTemplate
-                ? m.body.replace(/^\[WhatsApp template:[^\]]*\]\n?/, "").trim()
-                : m.body;
+        <CaseConversationThread
+          messages={messages}
+          preferredLanguage={detail.contact?.preferredLanguage}
+        />
+      </section>
 
-              const prev = messages[i - 1];
-              const showDateSep =
-                !prev ||
-                new Date(m.createdAt).toDateString() !==
-                  new Date(prev.createdAt).toDateString();
-              const ts = m.createdAt.toISOString().slice(11, 16);
-              const dateLabel = m.createdAt.toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              });
-
-              return (
-                <li key={m.id}>
-                  {showDateSep && (
-                    <div className="my-4 flex items-center gap-3">
-                      <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
-                      <span className="text-[11px] text-stone-400 dark:text-stone-500">{dateLabel}</span>
-                      <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
-                    </div>
-                  )}
-                  <div className={`flex ${inbound ? "justify-start" : "justify-end"} mt-1.5`}>
-                    <div className={`max-w-[min(85%,36rem)] space-y-0.5 ${inbound ? "" : "items-end flex flex-col"}`}>
-                      {isTemplate && (
-                        <div className="flex justify-end">
-                          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:bg-teal-900/60 dark:text-teal-300">
-                            Welcome template
-                          </span>
-                        </div>
-                      )}
-                      <div
-                        className={
-                          inbound
-                            ? "rounded-2xl rounded-tl-sm bg-stone-100 px-3.5 py-2.5 text-sm text-stone-900 dark:bg-stone-800 dark:text-stone-100"
-                            : isTemplate
-                              ? "rounded-2xl rounded-tr-sm bg-teal-700 px-3.5 py-2.5 text-sm text-white"
-                              : "rounded-2xl rounded-tr-sm bg-teal-600 px-3.5 py-2.5 text-sm text-white"
-                        }
-                      >
-                        <p className="whitespace-pre-wrap leading-relaxed">{displayBody}</p>
-                      </div>
-                      <p className={`text-[10px] text-stone-400 dark:text-stone-500 ${inbound ? "pl-1" : "pr-1"}`}>
-                        {inbound ? "Customer" : "Assistant"} · {ts} · {m.channel}
-                      </p>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        )}
+      <section
+        id="collected-data"
+        className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none"
+      >
+        <h2 className="text-lg font-medium text-stone-900 dark:text-stone-50">
+          Actions
+        </h2>
+        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+          Re-run extraction from the latest customer message into{" "}
+          <code className="rounded bg-stone-100 px-1 dark:bg-stone-800">
+            cases.collected_data
+          </code>{" "}
+          (Supabase).
+        </p>
+        <div className="mt-3">
+          <CaseActions caseId={c.id} />
+        </div>
       </section>
 
       <CollectedDataConsentPanel
         collectedData={c.collectedData}
         consent={c.consent}
+        pendingFieldKey={c.pendingFieldKey}
+        orchestrationState={c.orchestrationState}
+        preferredLanguage={
+          (detail.contact?.preferredLanguage as "en" | "pt") ?? "en"
+        }
       />
 
       <details className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">

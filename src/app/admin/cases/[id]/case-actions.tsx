@@ -24,7 +24,14 @@ export function CaseActions({ caseId }: { caseId: string }) {
       }
       setNotice({
         tone: "ok",
-        text: action === "resend" ? "Reminder sent." : action === "force_sms" ? "Channel set to SMS." : "Saved.",
+        text:
+          action === "resend"
+            ? "Reminder sent."
+            : action === "force_sms"
+              ? "Channel set to SMS."
+              : action === "reextract_collected_data"
+                ? "Collected data updated from the last customer message."
+                : "Saved.",
       });
       router.refresh();
     } finally {
@@ -49,6 +56,9 @@ export function CaseActions({ caseId }: { caseId: string }) {
         </button>
         <button type="button" disabled={pending !== null} onClick={() => run("retry_crm")} className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100 dark:hover:bg-stone-700">
           {pending === "retry_crm" ? "…" : "Retry CRM write"}
+        </button>
+        <button type="button" disabled={pending !== null} onClick={() => run("reextract_collected_data")} className="rounded-md border border-teal-300 bg-teal-50 px-3 py-1.5 text-sm text-teal-900 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40">
+          {pending === "reextract_collected_data" ? "…" : "Re-extract from last reply"}
         </button>
         <button type="button" disabled={pending !== null} onClick={() => run("needs_human")} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-100 dark:hover:bg-amber-900/40">
           {pending === "needs_human" ? "…" : "Mark needs human"}

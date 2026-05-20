@@ -49,6 +49,18 @@ function confidence(
   return c < 0.5;
 }
 
+/** One-line summary for case inbox table ("Extra information" column). */
+export function formatExtraInformationSummary(
+  raw: CollectedDataJson | null | undefined,
+  maxLen = 140,
+): string {
+  const rows = buildCollectedDataDisplayRows(raw);
+  if (rows.length === 0) return "—";
+  const line = rows.map((r) => `${r.label}: ${r.value}`).join(" · ");
+  if (line.length <= maxLen) return line;
+  return `${line.slice(0, maxLen - 1)}…`;
+}
+
 export function buildCollectedDataDisplayRows(
   raw: CollectedDataJson | null | undefined,
 ): CollectedDataDisplayRow[] {

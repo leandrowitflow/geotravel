@@ -8,6 +8,7 @@ import { buildCrmEnrichmentPayload } from "@/lib/crm/enrichment-payload";
 import { syncEnrichmentToCrm } from "@/lib/crm/sync-with-retry";
 import { writeBehaviouralEvent } from "@/lib/events/write-behavioural-event";
 import { sendViaPreferredChannel } from "@/lib/messaging/send-via-channel";
+import { applyInboundExtractionToCase } from "@/lib/orchestration/apply-inbound-extraction";
 import { serviceSupabase } from "@/lib/supabase/service-role";
 
 const bodySchema = z.object({
@@ -15,6 +16,7 @@ const bodySchema = z.object({
     "resend",
     "force_sms",
     "retry_crm",
+    "reextract_collected_data",
     "needs_human",
     "close_case",
   ]),
@@ -137,6 +139,36 @@ export async function POST(
         payload,
       });
       break;
+    }
+    case "reextract_collected_data": {
+      const inbound = takeRows<{ body: string }>(
+        "reextract last inbound",
+        await sb
+          .from("messages")
+          .select("body")
+          .eq("case_id", caseId)
+          .eq("direction", "inbound")
+          .order("created_at", { ascending: false })
+          .limit(1),
+      );
+      const body = inbound[0]?.body?.trim();
+      if (!body) {
+        return NextResponse.json(
+          { error: "no_inbound_message", hint: "Customer must have replied at least once." },
+          { status: 400 },
+        );
+      }
+      const merged = await applyInboundExtractionToCase({
+        caseId,
+        reservationId: resv.id,
+        customerMessage: body,
+        collectedData: row.collectedData,
+      });
+      return NextResponse.json({
+        ok: true,
+        collectedData: merged,
+        sourceMessage: body.slice(0, 500),
+      });
     }
     case "resend": {
       const contRows = takeRows<Record<string, unknown>>(

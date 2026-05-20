@@ -14,32 +14,42 @@ export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const LANGUAGE_CONFIDENCE_THRESHOLD = 0.72;
 
-/** Structured enrichment fields with per-field confidence 0–1 */
-export const extractionResultSchema = z.object({
-  passenger_count_actual: z.number().int().positive().nullable().optional(),
-  children_count: z.number().int().min(0).nullable().optional(),
-  child_ages: z.array(z.number().int().min(0).max(17)).nullable().optional(),
-  cabin_luggage_pieces: z.number().int().min(0).nullable().optional(),
-  cabin_luggage_notes: z.string().nullable().optional(),
-  checked_luggage_pieces: z.number().int().min(0).nullable().optional(),
-  checked_luggage_notes: z.string().nullable().optional(),
-  extras_items: z
-    .array(z.enum(EXTRA_ITEM_VALUES))
-    .nullable()
-    .optional(),
-  extras_none_confirmed: z.boolean().nullable().optional(),
-  extras_notes: z.string().nullable().optional(),
-  special_luggage_present: z.boolean().nullable().optional(),
-  special_luggage_types: z.array(z.string()).nullable().optional(),
-  reduced_mobility_present: z.boolean().nullable().optional(),
-  reduced_mobility_notes: z.string().nullable().optional(),
-  baby_stroller_present: z.boolean().nullable().optional(),
-  child_seat_needed: z.boolean().nullable().optional(),
-  additional_notes: z.string().nullable().optional(),
-  confidence: z.record(z.string(), z.number().min(0).max(1)).optional(),
+/**
+ * OpenAI GPT-5.x structured output: every property must be required; use null when unknown.
+ * (No .optional() — avoids invalid_json_schema on the Responses API.)
+ */
+export const extractionFieldsSchema = z.object({
+  passenger_count_actual: z.number().int().positive().nullable(),
+  children_count: z.number().int().min(0).nullable(),
+  child_ages: z.array(z.number().int().min(0).max(17)).nullable(),
+  cabin_luggage_pieces: z.number().int().min(0).nullable(),
+  cabin_luggage_notes: z.string().nullable(),
+  checked_luggage_pieces: z.number().int().min(0).nullable(),
+  checked_luggage_notes: z.string().nullable(),
+  extras_items: z.array(z.enum(EXTRA_ITEM_VALUES)).nullable(),
+  extras_none_confirmed: z.boolean().nullable(),
+  extras_notes: z.string().nullable(),
+  special_luggage_present: z.boolean().nullable(),
+  special_luggage_types: z.array(z.string()).nullable(),
+  reduced_mobility_present: z.boolean().nullable(),
+  reduced_mobility_notes: z.string().nullable(),
+  baby_stroller_present: z.boolean().nullable(),
+  child_seat_needed: z.boolean().nullable(),
+  additional_notes: z.string().nullable(),
 });
 
-export type ExtractionResult = z.infer<typeof extractionResultSchema>;
+export type ExtractionFields = z.infer<typeof extractionFieldsSchema>;
+
+/**
+ * Merged extraction patch (heuristic / LLM). Only set fields that were parsed;
+ * OpenAI uses full {@link ExtractionFields} with nulls via {@link extractionFieldsSchema}.
+ */
+export type ExtractionResult = Partial<ExtractionFields> & {
+  confidence?: Record<string, number>;
+};
+
+/** @deprecated Use extractionFieldsSchema for generateObject; kept for imports. */
+export const extractionResultSchema = extractionFieldsSchema;
 
 export const CRITICAL_FIELD_KEYS = [
   "passenger_count_actual",
