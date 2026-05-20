@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EXTRA_ITEM_VALUES } from "@/lib/contracts/extras-items";
 
 /** MVP priority languages — geotravel_spec_kit 02 */
 export const SUPPORTED_LANGUAGES = [
@@ -18,6 +19,16 @@ export const extractionResultSchema = z.object({
   passenger_count_actual: z.number().int().positive().nullable().optional(),
   children_count: z.number().int().min(0).nullable().optional(),
   child_ages: z.array(z.number().int().min(0).max(17)).nullable().optional(),
+  cabin_luggage_pieces: z.number().int().min(0).nullable().optional(),
+  cabin_luggage_notes: z.string().nullable().optional(),
+  checked_luggage_pieces: z.number().int().min(0).nullable().optional(),
+  checked_luggage_notes: z.string().nullable().optional(),
+  extras_items: z
+    .array(z.enum(EXTRA_ITEM_VALUES))
+    .nullable()
+    .optional(),
+  extras_none_confirmed: z.boolean().nullable().optional(),
+  extras_notes: z.string().nullable().optional(),
   special_luggage_present: z.boolean().nullable().optional(),
   special_luggage_types: z.array(z.string()).nullable().optional(),
   reduced_mobility_present: z.boolean().nullable().optional(),
@@ -34,11 +45,10 @@ export const CRITICAL_FIELD_KEYS = [
   "passenger_count_actual",
   "children_count",
   "child_ages",
-  "special_luggage_present",
-  "special_luggage_types",
+  "cabin_luggage_pieces",
+  "checked_luggage_pieces",
+  "extras_items",
+  "extras_none_confirmed",
   "reduced_mobility_present",
-  "reduced_mobility_notes",
-  "baby_stroller_present",
-  "child_seat_needed",
   "additional_notes",
 ] as const;

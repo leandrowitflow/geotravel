@@ -12,12 +12,10 @@ import {
   cannedWhatsappCatchAllReply,
   cannedWhatsappTemplateAwareReply,
   detectLanguageFromText,
-  extractOperationalFields,
   generateInboundAssistantReply,
   generateWhatsappCatchAllReply,
   generateWhatsappEnrichmentAsk,
   generateWhatsappTemplateAwareReply,
-  mergeExtraction,
   naturalizeWhatsappReply,
   resolveConversationLanguage,
 } from "@/lib/ai/pipeline";
@@ -28,7 +26,9 @@ import {
   scriptedEnrichmentCompleteAck,
   scriptedSummarizeCorrectionAsk,
 } from "@/lib/ai/assistant-locale";
+import { applyInboundExtractionToCaseRow } from "@/lib/orchestration/apply-inbound-extraction";
 import { resolveWhatsappTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
+import { buildCollectedDataDisplayRows } from "@/lib/admin/collected-data-display";
 import { buildCrmEnrichmentPayload } from "@/lib/crm/enrichment-payload";
 import { syncConfirmationToCrm, syncEnrichmentToCrm } from "@/lib/crm/sync-with-retry";
 import type { SupportedLanguage } from "@/lib/contracts/extraction";
@@ -96,7 +96,7 @@ export async function processInboundMessaging(input: {
     console.warn(`[pipeline] case_not_found for reservation ${reservation.id}`);
     return { ok: false, error: "case_not_found" };
   }
-  const caseRow = mapCase(caseRowRaw);
+  let caseRow = mapCase(caseRowRaw);
 
   assertNoError(
     "inbound message insert",
@@ -165,6 +165,12 @@ export async function processInboundMessaging(input: {
     reservationId: reservation.id,
     payload: { language: convLang, confidence: langDet.confidence },
   });
+
+  caseRow = await applyInboundExtractionToCaseRow(
+    caseRow,
+    reservation.id,
+    input.body,
+  );
 
   let outboundThisTurn = false;
 
@@ -481,32 +487,7 @@ export async function processInboundMessaging(input: {
       state = "identity_confirm";
     }
 
-    const collected = (caseRow.collectedData ?? {}) as CollectedDataJson;
-    let extraction: Awaited<ReturnType<typeof extractOperationalFields>>;
-    try {
-      extraction = await extractOperationalFields({
-        customerMessage: input.body,
-        prior: collected as Record<string, unknown>,
-      });
-    } catch (e) {
-      console.warn("[processInboundMessaging] extractOperationalFields failed:", e);
-      extraction = { confidence: {} };
-    }
-    const merged = mergeExtraction(
-      collected as Record<string, unknown>,
-      extraction,
-    ) as unknown as CollectedDataJson;
-    const confVals = extraction.confidence
-      ? Object.values(extraction.confidence)
-      : [];
-    const lowConf = confVals.some((c) => c < 0.5);
-    if (lowConf) {
-      await writeBehaviouralEvent({
-        eventType: "extraction_low_confidence",
-        caseId: caseRow.id,
-        reservationId: reservation.id,
-      });
-    }
+    const merged = (caseRow.collectedData ?? {}) as CollectedDataJson;
 
     assertTransition(state, "collect_missing");
     assertNoError(
@@ -732,16 +713,15 @@ async function sendReply(
 }
 
 function formatSummary(data: CollectedDataJson, lang: SupportedLanguage): string {
-  const lines = [
-    lang === "pt" ? "Resumo:" : "Summary:",
-    `${lang === "pt" ? "Passageiros" : "Passengers"}: ${data.passenger_count_actual ?? "—"}`,
-    `${lang === "pt" ? "Crianças" : "Children"}: ${data.children_count ?? "—"}`,
-    `${lang === "pt" ? "Bagagem especial" : "Special luggage"}: ${data.special_luggage_present ?? "—"}`,
-    `${lang === "pt" ? "Mobilidade" : "Mobility"}: ${data.reduced_mobility_present ?? "—"}`,
-    `${lang === "pt" ? "Notas" : "Notes"}: ${data.additional_notes ?? "—"}`,
+  const rows = buildCollectedDataDisplayRows(data);
+  const lines = [lang === "pt" ? "Resumo:" : "Summary:"];
+  for (const row of rows) {
+    lines.push(`${row.label}: ${row.value}`);
+  }
+  lines.push(
     lang === "pt"
       ? "Está tudo correto? Responda SIM ou NÃO."
       : "Is this correct? Please reply YES or NO.",
-  ];
+  );
   return lines.join("\n");
 }

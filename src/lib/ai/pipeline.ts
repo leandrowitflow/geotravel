@@ -8,6 +8,9 @@ import {
   type ExtractionResult,
   type SupportedLanguage,
 } from "@/lib/contracts/extraction";
+import { buildOperationalExtractionPrompt } from "@/lib/ai/extraction-prompt";
+import type { CollectedDataJson } from "@/db/schema";
+import { mergeCollectedData } from "@/lib/orchestration/collected-data-merge";
 import { firstNameFromDisplayName } from "@/lib/passenger/first-name";
 import type { WhatsappTemplateConversationContext } from "@/lib/geotravel/whatsapp-template-ai-context";
 import {
@@ -101,7 +104,10 @@ export async function extractOperationalFields(input: {
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: extractionResultSchema,
-    prompt: `Extract operational transfer booking details from the message. Use null if unknown. Prior known values (may update): ${JSON.stringify(input.prior ?? {})}\n\nMessage:\n"""${input.customerMessage.slice(0, 4000)}"""`,
+    prompt: buildOperationalExtractionPrompt(
+      input.customerMessage,
+      input.prior,
+    ),
   });
   return object;
 }
@@ -351,18 +357,5 @@ export function mergeExtraction(
   prior: Record<string, unknown> | null | undefined,
   next: ExtractionResult,
 ): Record<string, unknown> {
-  const base = { ...(prior ?? {}) };
-  for (const [k, v] of Object.entries(next)) {
-    if (k === "confidence") continue;
-    if (v !== undefined && v !== null) {
-      (base as Record<string, unknown>)[k] = v;
-    }
-  }
-  if (next.confidence) {
-    base.collection_confidence = {
-      ...((base.collection_confidence as Record<string, number>) ?? {}),
-      ...next.confidence,
-    };
-  }
-  return base;
+  return mergeCollectedData(prior as CollectedDataJson | null, next);
 }

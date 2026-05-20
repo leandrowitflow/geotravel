@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CollectedDataConsentPanel } from "@/components/admin/collected-data-consent-panel";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
 import { getCaseDetail } from "@/lib/admin/queries";
 export default async function CaseDetailPage({
@@ -144,22 +145,10 @@ export default async function CaseDetailPage({
         )}
       </section>
 
-      <details className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
-        <summary className="cursor-pointer text-lg font-medium text-stone-900 dark:text-stone-50">
-          Collected data & consent
-        </summary>
-        <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
-          JSON for debugging — collapsed by default to keep testing focused on messages.
-        </p>
-        <h3 className="mt-3 text-sm font-medium text-stone-700 dark:text-stone-300">Collected data</h3>
-        <pre className="mt-1 max-h-64 overflow-auto rounded bg-stone-50 p-3 text-xs dark:bg-stone-950 dark:text-stone-200">
-          {JSON.stringify(c.collectedData ?? {}, null, 2)}
-        </pre>
-        <h3 className="mt-4 text-sm font-medium text-stone-700 dark:text-stone-300">Consent</h3>
-        <pre className="mt-1 max-h-48 overflow-auto rounded bg-stone-50 p-3 text-xs dark:bg-stone-950 dark:text-stone-200">
-          {JSON.stringify(c.consent ?? {}, null, 2)}
-        </pre>
-      </details>
+      <CollectedDataConsentPanel
+        collectedData={c.collectedData}
+        consent={c.consent}
+      />
 
       <details className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
         <summary className="cursor-pointer text-lg font-medium text-stone-900 dark:text-stone-50">

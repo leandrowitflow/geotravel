@@ -4,6 +4,13 @@ export type CollectedDataJson = {
   passenger_count_actual?: number | null;
   children_count?: number | null;
   child_ages?: number[] | null;
+  cabin_luggage_pieces?: number | null;
+  cabin_luggage_notes?: string | null;
+  checked_luggage_pieces?: number | null;
+  checked_luggage_notes?: string | null;
+  extras_items?: string[] | null;
+  extras_none_confirmed?: boolean | null;
+  extras_notes?: string | null;
   special_luggage_present?: boolean | null;
   special_luggage_types?: string[] | null;
   reduced_mobility_present?: boolean | null;

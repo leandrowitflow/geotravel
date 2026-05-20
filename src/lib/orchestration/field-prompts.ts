@@ -4,7 +4,9 @@ import type { SupportedLanguage } from "@/lib/contracts/extraction";
 const FIELD_ORDER = [
   "passenger_count_actual",
   "children_count",
-  "special_luggage_present",
+  "cabin_luggage",
+  "checked_luggage",
+  "extras",
   "reduced_mobility_present",
   "additional_notes",
 ] as const;
@@ -29,12 +31,26 @@ const COPY: Record<
     fr: "Combien d’enfants et quel âge ont-ils ?",
     de: "Wie viele Kinder und welches Alter?",
   },
-  special_luggage_present: {
-    en: "Will you have any special luggage (golf equipment, sports gear, pushchair, wheelchair, or oversized items)?",
-    pt: "Terá bagagem especial (equipamento de golfe, material desportivo, carrinho de bebé, cadeira de rodas ou volume extra)?",
-    es: "¿Equipaje especial (golf, deportes, carrito, silla de ruedas, gran tamaño)?",
-    fr: "Bagages spéciaux (golf, sport, poussette, fauteuil, surdimensionné) ?",
-    de: "Besonderes Gepäck (Golf, Sport, Kinderwagen, Rollstuhl, übergroß)?",
+  cabin_luggage: {
+    en: "How many pieces of cabin (hand) luggage will you have?",
+    pt: "Quantas peças de bagagem de cabine terá?",
+    es: "¿Cuántas piezas de equipaje de mano?",
+    fr: "Combien de bagages cabine ?",
+    de: "Wie viele Handgepäckstücke?",
+  },
+  checked_luggage: {
+    en: "How many checked (hold) suitcases will you have?",
+    pt: "Quantas malas de porão (bagagem de porão) terá?",
+    es: "¿Cuántas maletas facturadas?",
+    fr: "Combien de bagages en soute ?",
+    de: "Wie viele Aufgabegepäckstücke?",
+  },
+  extras: {
+    en: "Any extras? Baby seat, booster seat, bicycle, golf bag, sports equipment, pet box, pushchair, wheelchair, or other — please list or say none.",
+    pt: "Algum extra? Cadeira de bebé, booster, bicicleta, golfe, material desportivo, caixa para animal, carrinho, cadeira de rodas ou outro — indique ou diga que não tem.",
+    es: "¿Algún extra? Silla de bebé, elevador, bicicleta, golf, deporte, mascota, carrito, silla de ruedas u otro.",
+    fr: "Extras ? Siège bébé, réhausseur, vélo, golf, sport, animal, poussette, fauteuil, autre.",
+    de: "Extras? Babysitz, Sitzerhöhung, Fahrrad, Golf, Sport, Tierbox, Kinderwagen, Rollstuhl oder anderes.",
   },
   reduced_mobility_present: {
     en: "Are there any reduced mobility requirements we should pass to the driver?",
@@ -52,6 +68,27 @@ const COPY: Record<
   },
 };
 
+function cabinLuggageComplete(d: CollectedDataJson): boolean {
+  return (
+    d.cabin_luggage_pieces != null ||
+    Boolean(d.cabin_luggage_notes?.trim())
+  );
+}
+
+function checkedLuggageComplete(d: CollectedDataJson): boolean {
+  return (
+    d.checked_luggage_pieces != null ||
+    Boolean(d.checked_luggage_notes?.trim())
+  );
+}
+
+function extrasComplete(d: CollectedDataJson): boolean {
+  if (d.extras_none_confirmed === true) return true;
+  if (d.extras_items != null) return true;
+  if (Boolean(d.extras_notes?.trim())) return true;
+  return false;
+}
+
 export function nextMissingField(
   data: CollectedDataJson | null | undefined,
 ): FieldKey | null {
@@ -63,10 +100,13 @@ export function nextMissingField(
     if (key === "children_count" && d.children_count == null) {
       return key;
     }
-    if (
-      key === "special_luggage_present" &&
-      d.special_luggage_present == null
-    ) {
+    if (key === "cabin_luggage" && !cabinLuggageComplete(d)) {
+      return key;
+    }
+    if (key === "checked_luggage" && !checkedLuggageComplete(d)) {
+      return key;
+    }
+    if (key === "extras" && !extrasComplete(d)) {
       return key;
     }
     if (
@@ -87,4 +127,15 @@ export function promptForField(
   lang: SupportedLanguage,
 ): string {
   return COPY[field][lang] ?? COPY[field].en;
+}
+
+/** Maps orchestration pending_field_key to prompt copy key. */
+export function promptForFieldKey(
+  fieldKey: string,
+  lang: SupportedLanguage,
+): string {
+  if ((FIELD_ORDER as readonly string[]).includes(fieldKey)) {
+    return promptForField(fieldKey as FieldKey, lang);
+  }
+  return promptForField("additional_notes", lang);
 }
