@@ -23,8 +23,11 @@ import {
   canTransition,
   type OrchestrationState,
 } from "@/lib/orchestration/state-machine";
+import { allowsOperationalEnrichmentForPhase } from "@/lib/geotravel/whatsapp-template-ai-context";
+import { mergeLastWhatsappLifecyclePhase } from "@/lib/orchestration/resolve-whatsapp-template-context";
 import { defaultRetryDelayMinutes } from "@/lib/scheduling/quiet-hours";
 import { serviceSupabase } from "@/lib/supabase/service-role";
+import type { CollectedDataJson } from "@/db/schema";
 
 function envTruthy(name: string): boolean {
   const v = process.env[name]?.trim().toLowerCase();
@@ -238,24 +241,65 @@ export async function executeGeotravelWelcomeSend(
       ? welcomeBody
       : longBodyText;
 
+  const sb = serviceSupabase();
+
   assertNoError(
     "geotravel whatsapp insert message",
-    await serviceSupabase().from("messages").insert({
+    await sb.from("messages").insert({
       case_id: ctx.caseId,
       direction: "outbound",
       channel: send.channel,
       body: messageBodyForStore,
       provider_message_id: send.providerMessageId,
       status: "sent",
+      metadata:
+        useWaTemplate && lifecyclePhase
+          ? {
+              lifecycle_phase: lifecyclePhase,
+              meta_template_name: templateName,
+              template_language: templateLanguageCode,
+            }
+          : null,
     }),
   );
 
+  if (lifecyclePhase) {
+    const caseRes = await sb
+      .from("cases")
+      .select("collected_data")
+      .eq("id", ctx.caseId)
+      .maybeSingle();
+    if (!caseRes.error && caseRes.data) {
+      const collected = (caseRes.data.collected_data as CollectedDataJson) ?? {};
+      assertNoError(
+        "geotravel case last template phase",
+        await sb
+          .from("cases")
+          .update({
+            collected_data: mergeLastWhatsappLifecyclePhase(
+              collected,
+              lifecyclePhase,
+            ),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", ctx.caseId),
+      );
+    }
+  }
+
   const from = ctx.orchestrationState as OrchestrationState;
-  if (from === "awaiting_outreach" && canTransition(from, "identity_confirm")) {
+  const advanceToIdentityConfirm =
+    !lifecyclePhase ||
+    allowsOperationalEnrichmentForPhase(lifecyclePhase);
+  if (
+    from === "awaiting_outreach" &&
+    advanceToIdentityConfirm &&
+    canTransition(from, "identity_confirm")
+  ) {
     assertTransition(from, "identity_confirm");
     assertNoError(
       "geotravel whatsapp case transition",
-      await serviceSupabase()
+      await sb
         .from("cases")
         .update({
           orchestration_state: "identity_confirm",

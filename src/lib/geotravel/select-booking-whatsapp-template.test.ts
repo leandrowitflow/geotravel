@@ -52,17 +52,17 @@ describe("selectBookingWhatsappTemplate", () => {
     expect(sel.language).toBe("pt_PT");
   });
 
-  it("uses welcome_2 phase when between 24h and 72h until pickup", () => {
+  it("uses welcome_2 phase when between 48h and 72h until pickup", () => {
     delete process.env.WHATSAPP_LIFECYCLE_FALLBACK_TEMPLATE;
     const b = booking({
-      pickup_date_time: "2026-05-21T12:00:00.000Z",
+      pickup_date_time: "2026-05-21T14:00:00.000Z",
     });
     const sel = selectBookingWhatsappTemplate(b, now);
     expect(sel.phase).toBe("welcome_2");
     expect(sel.metaTemplateName).toBe("welcome_2");
   });
 
-  it("uses data phase within 24h of pickup", () => {
+  it("uses data phase within 48h of pickup", () => {
     const b = booking({
       pickup_date_time: "2026-05-20T06:00:00.000Z",
     });

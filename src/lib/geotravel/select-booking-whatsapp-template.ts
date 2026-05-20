@@ -46,8 +46,10 @@ export function resolveMetaTemplateName(
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
-const HOURS_BEFORE_WELCOME_2 = 72;
-const HOURS_BEFORE_DATA = 24;
+/** Second welcome when pickup is within 72h but more than 48h away. */
+export const HOURS_BEFORE_WELCOME_2 = 72;
+/** Final pre-pickup data template within this many hours of pickup. */
+export const HOURS_BEFORE_DATA = 48;
 
 export function isGeotravelWhatsappLifecycleTemplate(
   name: string,
@@ -91,8 +93,8 @@ export type SelectedBookingWhatsappTemplate = {
  *
  * - canceled — booking cancelled
  * - satisfaction — pickup time has passed
- * - data — within 24h of pickup (still in the future)
- * - welcome_2 — less than 72h until pickup (but more than 24h)
+ * - data — within 48h of pickup (still in the future)
+ * - welcome_2 — between 48h and 72h until pickup
  * - welcome_1 — more than 72h until pickup (or unknown pickup time)
  */
 export function selectBookingWhatsappTemplate(
@@ -127,7 +129,7 @@ export function selectBookingWhatsappTemplate(
     };
   }
 
-  if (hours !== null && hours <= HOURS_BEFORE_DATA) {
+  if (hours !== null && hours > 0 && hours <= HOURS_BEFORE_DATA) {
     const phase = "data";
     return {
       phase,
@@ -138,7 +140,11 @@ export function selectBookingWhatsappTemplate(
     };
   }
 
-  if (hours !== null && hours < HOURS_BEFORE_WELCOME_2) {
+  if (
+    hours !== null &&
+    hours > HOURS_BEFORE_DATA &&
+    hours <= HOURS_BEFORE_WELCOME_2
+  ) {
     const phase = "welcome_2";
     return {
       phase,

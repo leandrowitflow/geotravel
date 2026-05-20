@@ -1,5 +1,6 @@
 import { cron } from "inngest";
 import { runGeotravelBookingsDeltaSync } from "@/lib/geotravel/run-bookings-delta-sync";
+import { runLifecycleWhatsappAutomation } from "@/lib/geotravel/run-lifecycle-whatsapp-automation";
 import { inngest } from "@/inngest/client";
 
 /**
@@ -37,4 +38,55 @@ export const geotravelBookingsDeltaSync = inngest.createFunction(
   },
 );
 
-export const inngestFunctions = [geotravelBookingsDeltaSync];
+/**
+ * Every 15 minutes: lifecycle WhatsApp templates for pilot phone 966915976 only.
+ * Requires GEOTRAVEL_WHATSAPP_LIFECYCLE_AUTOMATION=true and WhatsApp env configured.
+ */
+export const geotravelLifecycleWhatsappPilot = inngest.createFunction(
+  {
+    id: "geotravel-lifecycle-whatsapp-pilot",
+    name: "Geotravel lifecycle WhatsApp (pilot 966915976)",
+    triggers: [cron("*/15 * * * *")],
+  },
+  async ({ step, logger }) => {
+    const result = await step.run("lifecycle-whatsapp-pilot", () =>
+      runLifecycleWhatsappAutomation(),
+    );
+
+    if (!result.ok) {
+      logger.error("Lifecycle WhatsApp automation failed", { error: result.error });
+      throw new Error(result.error);
+    }
+
+    if (result.skipped) {
+      logger.info("Lifecycle WhatsApp automation skipped", {
+        reason: result.reason,
+      });
+      return result;
+    }
+
+    const sent = result.attempts.filter((a) => a.ok && !a.skipped);
+    const failed = result.attempts.filter((a) => !a.ok);
+
+    logger.info("Lifecycle WhatsApp automation completed", {
+      bookingsScanned: result.bookingsScanned,
+      sent: sent.length,
+      failed: failed.length,
+      phases: sent.map((a) => ({
+        bookingId: a.bookingId,
+        phase: a.phase,
+      })),
+    });
+
+    if (failed.length > 0) {
+      logger.warn("Lifecycle WhatsApp send failures", { failed });
+    }
+
+    return result;
+  },
+);
+
+export const inngestFunctions = [
+  geotravelBookingsDeltaSync,
+  geotravelLifecycleWhatsappPilot,
+];

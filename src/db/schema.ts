@@ -13,6 +13,8 @@ export type CollectedDataJson = {
   additional_notes?: string | null;
   collection_confidence?: Record<string, number>;
   last_confirmed_at?: string | null;
+  /** Last Meta lifecycle phase sent on WhatsApp (welcome_1, canceled, …) for AI reply tone. */
+  last_whatsapp_lifecycle_phase?: string | null;
 };
 
 export type ConsentJson = {

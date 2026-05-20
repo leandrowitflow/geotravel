@@ -9,12 +9,31 @@ import {
   type SupportedLanguage,
 } from "@/lib/contracts/extraction";
 import { firstNameFromDisplayName } from "@/lib/passenger/first-name";
+import type { WhatsappTemplateConversationContext } from "@/lib/geotravel/whatsapp-template-ai-context";
+import {
+  assistantLocaleLabel,
+  assistantSystemPreamble,
+  cannedCrmHandoffAfterSyncFail as cannedCrmHandoffLocale,
+  cannedNeedsHumanAck as cannedNeedsHumanLocale,
+  cannedWhatsappCatchAllReply as cannedCatchAllLocale,
+  cannedWhatsappTemplateAwareReply as cannedTemplateAwareLocale,
+  toAssistantLocale,
+} from "@/lib/ai/assistant-locale";
 
 function passengerContextLine(passengerName: string | null | undefined): string {
   const full = (passengerName ?? "").trim();
   if (!full) return "Passenger name: (not on file yet)";
   const first = firstNameFromDisplayName(full);
   return `Passenger name: ${full}${first && first !== full ? ` (first name for greeting: ${first})` : ""}`;
+}
+
+function templateContextBlock(
+  ctx: WhatsappTemplateConversationContext | null | undefined,
+): string {
+  if (!ctx) return "Last outbound: unknown (no template context on file).";
+  return `Last WhatsApp template phase: ${ctx.phase}
+Template-aware reply rules (must follow):
+${ctx.aiInstructions}`;
 }
 
 const assistantAckSchema = z.object({
@@ -33,10 +52,12 @@ const catchAllSchema = z.object({
   reply: z.string().min(1).max(900),
 });
 
-const languageSchema = z.object({
-  language: z.enum(SUPPORTED_LANGUAGES),
+const assistantLanguageSchema = z.object({
+  language: z.enum(["en", "pt"]),
   confidence: z.number().min(0).max(1),
 });
+
+const languageSchema = assistantLanguageSchema;
 
 export type LanguageDetection = z.infer<typeof languageSchema>;
 
@@ -50,7 +71,10 @@ export async function detectLanguageFromText(
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: languageSchema,
-    prompt: `Detect the primary language of this customer message. Return one of: en, pt, es, fr, de. Text:\n"""${text.slice(0, 2000)}"""`,
+    prompt: `Detect whether this customer message is primarily in English or Portuguese.
+Return "pt" for Portuguese (Portugal or Brazil — treat both as pt).
+Return "en" for English or any other language (Spanish, French, German, etc.).
+Text:\n"""${text.slice(0, 2000)}"""`,
   });
   return object;
 }
@@ -59,10 +83,11 @@ export function resolveConversationLanguage(
   detection: LanguageDetection,
   fallback: SupportedLanguage,
 ): SupportedLanguage {
-  if (detection.confidence >= LANGUAGE_CONFIDENCE_THRESHOLD) {
-    return detection.language;
-  }
-  return fallback;
+  const raw =
+    detection.confidence >= LANGUAGE_CONFIDENCE_THRESHOLD
+      ? detection.language
+      : fallback;
+  return toAssistantLocale(raw);
 }
 
 export async function extractOperationalFields(input: {
@@ -89,33 +114,28 @@ export async function generateInboundAssistantReply(input: {
   pickupSummary: string | null;
   /** Full name from reservation / API when available */
   passengerName?: string | null;
+  whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const langHint =
-    input.language === "pt"
-      ? "Portuguese"
-      : input.language === "es"
-        ? "Spanish"
-        : input.language === "fr"
-          ? "French"
-          : input.language === "de"
-            ? "German"
-            : "English";
+  const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: assistantAckSchema,
-    prompt: `You are Geotravel's professional WhatsApp assistant. This booking is with a human agent for review, but the customer just sent a message.
+    prompt: `${assistantSystemPreamble(locale)}
 
-Write ONE short reply (max ~400 characters) in ${langHint}:
-- Warm, natural tone — not robotic.
+This booking is with a human agent for review, but the customer just sent a message.
+
+Write ONE short reply (max ~400 characters) in ${assistantLocaleLabel(locale)}:
 - Thank them and acknowledge what they said at a high level.
-- If a passenger name is on file, you may use the first name once in a natural greeting; if unknown, do not invent a name.
-- If you can safely answer from the context (pickup time/location, booking ref), do so briefly.
-- Otherwise say the team will respond soon. Do not promise refunds, cancellations, or price changes.
+- If a passenger name is on file, you may use the first name once in a polite greeting; if unknown, do not invent a name.
+- If you can safely answer from the context (pickup time/location, booking ref), do so briefly — unless template rules say not to discuss the trip.
+- Otherwise say our team will respond shortly. Do not promise refunds, cancellations, or price changes.
 - Do not ask for payment or personal documents.
+
+${templateContextBlock(input.whatsappTemplateContext)}
 
 ${passengerContextLine(input.passengerName)}
 Booking ref: ${input.bookingRef ?? "unknown"}
@@ -128,18 +148,7 @@ Customer message:
 }
 
 export function cannedNeedsHumanAck(lang: SupportedLanguage): string {
-  switch (lang) {
-    case "pt":
-      return "Obrigado pela mensagem. A nossa equipa irá responder em breve.";
-    case "es":
-      return "Gracias por su mensaje. Nuestro equipo le responderá en breve.";
-    case "fr":
-      return "Merci pour votre message. Notre équipe vous répondra sous peu.";
-    case "de":
-      return "Vielen Dank für Ihre Nachricht. Unser Team meldet sich in Kürze.";
-    case "en":
-      return "Thanks for your message. Our team will get back to you shortly.";
-  }
+  return cannedNeedsHumanLocale(lang);
 }
 
 /** Rephrase scripted orchestration copy into natural WhatsApp tone (same facts / asks). */
@@ -150,31 +159,26 @@ export async function naturalizeWhatsappReply(input: {
   language: SupportedLanguage;
   reservationSummary: string;
   passengerName?: string | null;
+  whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const langHint =
-    input.language === "pt"
-      ? "Portuguese"
-      : input.language === "es"
-        ? "Spanish"
-        : input.language === "fr"
-          ? "French"
-          : input.language === "de"
-            ? "German"
-            : "English";
+  const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: naturalizeSchema,
-    prompt: `You are Geotravel's WhatsApp assistant. Rewrite the "scripted intent" as a single warm, natural message in ${langHint}.
+    prompt: `${assistantSystemPreamble(locale)}
+
+Rewrite the "scripted intent" as a single professional WhatsApp message in ${assistantLocaleLabel(locale)}.
 Rules:
-- Keep the same purpose (questions asked, facts stated, yes/no prompts).
+- Keep the same purpose (questions asked, facts stated, yes/no prompts) unless template rules forbid that topic.
 - Do not invent pickup times, prices, policies, or new commitments.
 - Short paragraphs, max ~600 characters if possible.
-- Sound human: contractions ok, "we/our team" tone, not robotic.
-- If passenger name is on file, you may use the first name once naturally; if not on file, do not invent.
+- If passenger name is on file, you may use the first name once politely; if not on file, do not invent.
+
+${templateContextBlock(input.whatsappTemplateContext)}
 
 ${passengerContextLine(input.passengerName)}
 Reservation context: ${input.reservationSummary}
@@ -200,31 +204,28 @@ export async function generateWhatsappEnrichmentAsk(input: {
   language: SupportedLanguage;
   reservationSummary: string;
   passengerName?: string | null;
+  whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const langHint =
-    input.language === "pt"
-      ? "Portuguese"
-      : input.language === "es"
-        ? "Spanish"
-        : input.language === "fr"
-          ? "French"
-          : input.language === "de"
-            ? "German"
-            : "English";
+  const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: enrichmentAskSchema,
-    prompt: `You are Geotravel's friendly WhatsApp assistant helping finalize a private transfer booking.
+    prompt: `${assistantSystemPreamble(locale)}
 
-Write ONE short message in ${langHint} (max ~650 characters):
-- Sound warm and human (contractions ok); no bullet lists unless truly needed.
+You are helping finalise a private transfer booking.
+
+Write ONE short message in ${assistantLocaleLabel(locale)} (max ~650 characters):
+- No bullet lists unless truly needed.
 - Ask for EXACTLY the same information as the scripted question — same topic, same intent.
 - Do not invent pickup times, prices, or policies. Do not promise refunds or cancellations.
 - If passenger name is on file, you may use the first name once; if not on file, do not invent.
+- Follow template-aware rules below — they override generic "confirm your trip" tone when they conflict.
+
+${templateContextBlock(input.whatsappTemplateContext)}
 
 ${passengerContextLine(input.passengerName)}
 Field key (internal): ${input.fieldKey}
@@ -242,37 +243,67 @@ Customer just said:
   return object.message.trim() || null;
 }
 
-export function cannedWhatsappCatchAllReply(lang: SupportedLanguage): string {
-  switch (lang) {
-    case "pt":
-      return "Obrigado pela mensagem. Se precisar de algo sobre o seu transfer, diga-nos e ajudamos já a seguir.";
-    case "es":
-      return "Gracias por su mensaje. Si necesita algo sobre su transfer, díganos y le ayudamos en seguida.";
-    case "fr":
-      return "Merci pour votre message. Si vous avez besoin d'aide pour votre transfert, dites-le nous et nous vous repondrons.";
-    case "de":
-      return "Danke für Ihre Nachricht. Wenn Sie etwas zu Ihrem Transfer brauchen, schreiben Sie uns kurz — wir melden uns.";
-    case "en":
-      return "Thanks for your message. If you need anything about your transfer, tell us here and we will help right away.";
+export function cannedWhatsappTemplateAwareReply(
+  lang: SupportedLanguage,
+  phase: WhatsappTemplateConversationContext["phase"],
+): string {
+  if (phase === "canceled" || phase === "satisfaction") {
+    return cannedTemplateAwareLocale(lang, phase);
   }
+  return cannedWhatsappCatchAllReply(lang);
+}
+
+export function cannedWhatsappCatchAllReply(lang: SupportedLanguage): string {
+  return cannedCatchAllLocale(lang);
 }
 
 export function cannedCrmHandoffAfterSyncFail(lang: SupportedLanguage): string {
-  switch (lang) {
-    case "pt":
-      return "Recebemos os seus dados, mas houve um problema técnico ao guardar no nosso sistema. A nossa equipa irá concluir isto manualmente e contactá-lo se for necessário.";
-    case "es":
-      return "Hemos recibido sus datos, pero hubo un problema técnico al guardarlos. Nuestro equipo lo revisará manualmente y le contactará si hace falta.";
-    case "fr":
-      return "Nous avons bien reçu vos informations, mais une erreur technique est survenue. Notre équipe finalisera cela manuellement et vous recontactera si besoin.";
-    case "de":
-      return "Wir haben Ihre Angaben erhalten, beim Speichern ist jedoch ein technisches Problem aufgetreten. Unser Team erledigt das manuell und meldet sich bei Bedarf.";
-    case "en":
-      return "We received your details, but a technical issue occurred while saving them. Our team will finish this manually and follow up if needed.";
-  }
+  return cannedCrmHandoffLocale(lang);
 }
 
 /** When no scripted outbound ran (e.g. awaiting_d1 chit-chat), generate one helpful WhatsApp reply. */
+/** Reply when the last outbound was cancel / satisfaction (no operational enrichment). */
+export async function generateWhatsappTemplateAwareReply(input: {
+  userMessage: string;
+  language: SupportedLanguage;
+  transcript: string;
+  reservationSummary: string;
+  bookingRef: string | null;
+  passengerName?: string | null;
+  whatsappTemplateContext: WhatsappTemplateConversationContext;
+}): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+  const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const locale = toAssistantLocale(input.language);
+  const { object } = await generateObject({
+    model: openai("gpt-4o-mini"),
+    schema: catchAllSchema,
+    prompt: `${assistantSystemPreamble(locale)}
+
+The customer is replying after we sent them a specific Meta template message.
+
+${templateContextBlock(input.whatsappTemplateContext)}
+
+${passengerContextLine(input.passengerName)}
+Booking ref (use only if appropriate for this template): ${input.bookingRef ?? "unknown"}
+Trip context (do not repeat unless the customer asks): ${input.reservationSummary}
+
+Thread:
+${input.transcript || "(empty)"}
+
+Customer message:
+"""${input.userMessage.slice(0, 3500)}"""
+
+Write ONE reply in ${assistantLocaleLabel(locale)} (max ~650 characters):
+- Directly address what they said with empathy and professionalism.
+- Strictly follow template-aware rules — they override generic transfer-assistant habits.
+- Do not invent refunds, amounts, or policies.`,
+  });
+  return object.reply.trim() || null;
+}
+
 export async function generateWhatsappCatchAllReply(input: {
   userMessage: string;
   language: SupportedLanguage;
@@ -281,26 +312,23 @@ export async function generateWhatsappCatchAllReply(input: {
   reservationSummary: string;
   bookingRef: string | null;
   passengerName?: string | null;
+  whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
 }): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY) {
     return null;
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const langHint =
-    input.language === "pt"
-      ? "Portuguese"
-      : input.language === "es"
-        ? "Spanish"
-        : input.language === "fr"
-          ? "French"
-          : input.language === "de"
-            ? "German"
-            : "English";
+  const locale = toAssistantLocale(input.language);
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     schema: catchAllSchema,
-    prompt: `You are Geotravel's WhatsApp assistant helping a passenger with their airport transfer.
+    prompt: `${assistantSystemPreamble(locale)}
+
+You are helping a passenger with their airport transfer.
 Internal workflow state (do not mention literally): ${input.orchestrationState}
+
+${templateContextBlock(input.whatsappTemplateContext)}
+
 ${passengerContextLine(input.passengerName)}
 Booking ref: ${input.bookingRef ?? "unknown"}
 Trip summary: ${input.reservationSummary}
@@ -311,12 +339,10 @@ ${input.transcript || "(empty)"}
 Customer message:
 """${input.userMessage.slice(0, 3500)}"""
 
-Write ONE helpful reply in ${langHint} (max ~700 characters):
-- Warm, natural tone — not robotic.
-- Answer what you safely can from context (pickup/destination/ref).
-- If passenger name is on file, you may greet with first name once; otherwise do not invent a name.
-- If you cannot answer (policy, changes, billing), say our team will confirm shortly — do not invent facts.
-- Stay concise and conversational.`,
+Write ONE helpful reply in ${assistantLocaleLabel(locale)} (max ~700 characters):
+- Answer what you safely can from context (pickup/destination/ref) unless template rules say otherwise.
+- If passenger name is on file, you may greet with first name once politely; otherwise do not invent a name.
+- If you cannot answer (policy, changes, billing), say our team will confirm shortly — do not invent facts.`,
   });
   return object.reply.trim() || null;
 }
