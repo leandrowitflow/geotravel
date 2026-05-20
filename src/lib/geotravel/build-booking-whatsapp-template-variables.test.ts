@@ -51,10 +51,20 @@ describe("buildBookingWhatsappTemplateVariables", () => {
     expect(v).not.toHaveProperty("first_name");
   });
 
-  it("adds cities for data", () => {
+  it("adds cities for data without booking_reference (Meta template has 5 vars)", () => {
     const v = buildBookingWhatsappTemplateVariables(booking({}), "data", "Maria");
     expect(v?.pickup_city).toContain("Lisbon");
     expect(v?.dropoff_city).toContain("Cascais");
+    expect(v).not.toHaveProperty("booking_reference");
+    expect(Object.keys(v ?? {}).sort()).toEqual(
+      [
+        "dropoff_city",
+        "operator",
+        "pickup_city",
+        "pickup_date_time",
+        "plateform",
+      ].sort(),
+    );
   });
 });
 

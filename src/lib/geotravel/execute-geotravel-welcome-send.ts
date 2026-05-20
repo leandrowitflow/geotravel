@@ -174,7 +174,7 @@ export async function executeGeotravelWelcomeSend(
                             return [
                               `Error 132000: parameter count/name mismatch for template "${templateName}".`,
                               "Run: npm run whatsapp:template-params — variables must match each template body.",
-                              "welcome_1/2/canceled need operator, plateform, booking_reference, pickup_date_time; data adds pickup_city, dropoff_city; satisfaction needs none; booking_confirmation needs first_name only.",
+                              "welcome_1/2/canceled: operator, plateform, booking_reference, pickup_date_time. data: operator, plateform, pickup_city, dropoff_city, pickup_date_time (no booking_reference). satisfaction: none. Run: npm run whatsapp:template-params",
                             ].join(" ");
                           }
                           const is132001 = /132001|does not exist in the translation/i.test(
