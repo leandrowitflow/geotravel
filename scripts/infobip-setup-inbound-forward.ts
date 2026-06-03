@@ -6,6 +6,7 @@
  *   npx tsx scripts/infobip-setup-inbound-forward.ts --dry-run
  */
 import { config } from "dotenv";
+import { resolveInfobipInboundWebhookUrl } from "../src/lib/messaging/infobip-inbound-webhook-url";
 
 config({ path: ".env.local" });
 config();
@@ -16,16 +17,6 @@ function infobipBaseUrl(): string | null {
   const trimmed = raw.replace(/\/$/, "");
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
-}
-
-function resolveWebhookUrl(): string {
-  const explicit = process.env.INFOBIP_INBOUND_WEBHOOK_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-  if (!base) {
-    throw new Error("Set NEXT_PUBLIC_APP_URL or INFOBIP_INBOUND_WEBHOOK_URL");
-  }
-  return `${base}/api/webhooks/infobip/sms`;
 }
 
 async function infobipFetch(path: string, init?: RequestInit) {
@@ -57,9 +48,9 @@ async function infobipFetch(path: string, init?: RequestInit) {
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const numberId = process.env.INFOBIP_SMS_NUMBER_ID?.trim();
-  const forwardUrl = resolveWebhookUrl();
+  const forwardUrl = resolveInfobipInboundWebhookUrl();
 
-  console.log("Target webhook:", forwardUrl);
+  console.log("Target webhook (public https only):", forwardUrl);
   if (!numberId) {
     console.error(
       "Set INFOBIP_SMS_NUMBER_ID in .env.local (portal number id, e.g. 5A8FA1DE61F37DF29AA8D4A8795C20A3).",

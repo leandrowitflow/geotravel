@@ -6,6 +6,10 @@
  *   npx tsx scripts/infobip-inbound-check.ts --webhook https://geotravel-eta.vercel.app/api/webhooks/infobip/sms
  */
 import { config } from "dotenv";
+import {
+  isPublicHttpsWebhookUrl,
+  resolveInfobipInboundWebhookUrl,
+} from "../src/lib/messaging/infobip-inbound-webhook-url";
 
 config({ path: ".env.local" });
 config();
@@ -13,17 +17,15 @@ config();
 function resolveWebhookUrl(): string {
   const argIdx = process.argv.indexOf("--webhook");
   if (argIdx >= 0 && process.argv[argIdx + 1]) {
-    return process.argv[argIdx + 1]!.replace(/\/$/, "");
+    const url = process.argv[argIdx + 1]!.trim().replace(/\/$/, "");
+    if (!isPublicHttpsWebhookUrl(url)) {
+      throw new Error(
+        `Not a valid Infobip webhook URL (must be public https): ${url}`,
+      );
+    }
+    return url;
   }
-  const explicit = process.env.INFOBIP_INBOUND_WEBHOOK_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-  const base = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-  if (!base) {
-    throw new Error(
-      "Set NEXT_PUBLIC_APP_URL or INFOBIP_INBOUND_WEBHOOK_URL, or pass --webhook <url>",
-    );
-  }
-  return `${base}/api/webhooks/infobip/sms`;
+  return resolveInfobipInboundWebhookUrl();
 }
 
 async function probeWebhook(url: string) {
@@ -111,7 +113,13 @@ function printInfobipPortalSteps(webhookUrl: string) {
 async function main() {
   const probeOnly = process.argv.includes("--probe-only");
   const webhookUrl = resolveWebhookUrl();
-  console.log("Inbound webhook:", webhookUrl);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (appUrl?.includes("localhost")) {
+    console.warn(
+      "Note: NEXT_PUBLIC_APP_URL is localhost — Infobip cannot use that. Using production webhook URL below.",
+    );
+  }
+  console.log("Inbound webhook (paste this in Infobip):", webhookUrl);
 
   await probeWebhook(webhookUrl);
   printInfobipPortalSteps(webhookUrl);
