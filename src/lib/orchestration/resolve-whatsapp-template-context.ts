@@ -83,8 +83,11 @@ export function mergeLastWhatsappLifecyclePhase(
   collected: CollectedDataJson | null | undefined,
   phase: string,
 ): CollectedDataJson {
+  const prev = collected?.lifecycle_phases_sent ?? [];
+  const phases = [...new Set([...prev, phase])];
   return {
     ...(collected ?? {}),
     last_whatsapp_lifecycle_phase: phase,
+    lifecycle_phases_sent: phases,
   };
 }

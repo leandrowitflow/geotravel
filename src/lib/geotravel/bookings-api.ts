@@ -25,6 +25,10 @@ export type GeotravelBooking = {
   plateform: string | null;
   booked_date: string | null;
   pickup_date_time: string | null;
+  /** When present on API rows, used for post-trip satisfaction timing. */
+  dropoff_date_time?: string | null;
+  /** Trip duration hint (minutes or H:MM) when dropoff time is missing. */
+  time_distance?: string | null;
   pickup_city: string | null;
   pickup_country: string | null;
   pickup_address: string | null;
