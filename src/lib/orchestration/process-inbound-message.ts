@@ -28,7 +28,12 @@ import {
 } from "@/lib/ai/assistant-locale";
 import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import { applyInboundExtractionToCaseRow } from "@/lib/orchestration/apply-inbound-extraction";
-import { resolveWhatsappTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
+import { resolveMessagingTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
+import {
+  clampSmsReply,
+  isTextMessagingChannel,
+  messagingAiConversationEnabled,
+} from "@/lib/messaging/messaging-ai-conversation";
 import { buildCollectedDataDisplayRows } from "@/lib/admin/collected-data-display";
 import { buildCrmEnrichmentPayload } from "@/lib/crm/enrichment-payload";
 import { syncConfirmationToCrm, syncEnrichmentToCrm } from "@/lib/crm/sync-with-retry";
@@ -46,11 +51,6 @@ import { assertTransition, type OrchestrationState } from "./state-machine";
 
 function needsHumanAutoReplyEnabled(): boolean {
   const v = process.env.AI_ASSISTANT_AUTO_REPLY_ON_NEEDS_HUMAN?.trim().toLowerCase();
-  return v !== "false" && v !== "0" && v !== "no";
-}
-
-function whatsappConversationFeaturesEnabled(): boolean {
-  const v = process.env.WHATSAPP_AI_CONVERSATION?.trim().toLowerCase();
   return v !== "false" && v !== "0" && v !== "no";
 }
 
@@ -104,6 +104,20 @@ export async function processInboundMessaging(input: {
     channel: input.channel,
   });
 
+  if (input.channel === "sms" && caseRow.currentChannel !== "sms") {
+    assertNoError(
+      "case channel sms on inbound",
+      await sb
+        .from("cases")
+        .update({
+          current_channel: "sms",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", caseRow.id),
+    );
+    caseRow = { ...caseRow, currentChannel: "sms" };
+  }
+
   const nowIso = new Date().toISOString();
   assertNoError(
     "case last customer message",
@@ -117,35 +131,34 @@ export async function processInboundMessaging(input: {
   );
   caseRow = { ...caseRow, lastCustomerMessageAt: new Date(nowIso) };
 
-  const whatsappTemplateContext =
-    input.channel === "whatsapp"
-      ? await resolveWhatsappTemplateContextForCase(
-          caseRow.id,
-          caseRow.collectedData,
-          sb,
-        )
-      : null;
+  const messagingTemplateContext = isTextMessagingChannel(input.channel)
+    ? await resolveMessagingTemplateContextForCase(
+        caseRow.id,
+        caseRow.collectedData,
+        sb,
+      )
+    : null;
   const templateOnlyConversation =
-    input.channel === "whatsapp" &&
-    whatsappTemplateContext &&
-    !whatsappTemplateContext.allowsOperationalEnrichment;
+    isTextMessagingChannel(input.channel) &&
+    messagingTemplateContext &&
+    !messagingTemplateContext.allowsOperationalEnrichment;
 
   const operationalTemplateReply =
-    input.channel === "whatsapp" &&
-    Boolean(whatsappTemplateContext?.allowsOperationalEnrichment);
+    isTextMessagingChannel(input.channel) &&
+    Boolean(messagingTemplateContext?.allowsOperationalEnrichment);
 
   if (
     operationalTemplateReply &&
-    whatsappTemplateContext &&
+    messagingTemplateContext &&
     (caseRow.caseStatus === "closed" ||
       caseRow.orchestrationState === "cancelled" ||
       caseRow.orchestrationState === "awaiting_d1" ||
       caseRow.orchestrationState === "d1_confirm")
   ) {
-    if (whatsappTemplateContext.phase !== "unknown") {
+    if (messagingTemplateContext.phase !== "unknown") {
       await advanceCaseForOperationalTemplateSend(
         caseRow.id,
-        whatsappTemplateContext.phase,
+        messagingTemplateContext.phase,
       );
       const refreshed = await sb
         .from("cases")
@@ -240,8 +253,8 @@ export async function processInboundMessaging(input: {
     outboundThisTurn = true;
     let out = text;
     if (
-      input.channel === "whatsapp" &&
-      whatsappConversationFeaturesEnabled() &&
+      isTextMessagingChannel(input.channel) &&
+      messagingAiConversationEnabled() &&
       !opts?.skipNaturalize
     ) {
       try {
@@ -252,12 +265,16 @@ export async function processInboundMessaging(input: {
           language: convLang,
           reservationSummary: reservationBlurb(),
           passengerName: reservation.customerName,
-          whatsappTemplateContext,
+          whatsappTemplateContext: messagingTemplateContext,
+          channel: input.channel,
         });
         if (n) out = n;
       } catch (e) {
         console.warn("[pipeline] naturalizeWhatsappReply failed, sending scripted text:", e);
       }
+    }
+    if (input.channel === "sms") {
+      out = clampSmsReply(out);
     }
     await sendReply(caseRow, reservation, contact, out, input.channel);
   }
@@ -279,7 +296,8 @@ export async function processInboundMessaging(input: {
           bookingRef: reservation.externalBookingId,
           pickupSummary: pickupSummary || null,
           passengerName: reservation.customerName,
-          whatsappTemplateContext,
+          whatsappTemplateContext: messagingTemplateContext,
+          channel: input.channel,
         });
       } catch (e) {
         console.warn("[processInboundMessaging] generateInboundAssistantReply failed:", e);
@@ -292,10 +310,10 @@ export async function processInboundMessaging(input: {
 
   let state = caseRow.orchestrationState as OrchestrationState;
 
-  if (templateOnlyConversation && whatsappTemplateContext) {
+  if (templateOnlyConversation && messagingTemplateContext) {
     let msg: string;
     const useAi =
-      whatsappConversationFeaturesEnabled() && Boolean(process.env.OPENAI_API_KEY);
+      messagingAiConversationEnabled() && Boolean(process.env.OPENAI_API_KEY);
     if (useAi) {
       try {
         msg =
@@ -306,9 +324,10 @@ export async function processInboundMessaging(input: {
             reservationSummary: reservationBlurb(),
             bookingRef: reservation.externalBookingId,
             passengerName: reservation.customerName,
-            whatsappTemplateContext,
+            whatsappTemplateContext: messagingTemplateContext,
+            channel: input.channel,
           })) ??
-          cannedWhatsappTemplateAwareReply(convLang, whatsappTemplateContext.phase);
+          cannedWhatsappTemplateAwareReply(convLang, messagingTemplateContext.phase);
       } catch (e) {
         console.warn(
           "[processInboundMessaging] generateWhatsappTemplateAwareReply failed:",
@@ -316,13 +335,13 @@ export async function processInboundMessaging(input: {
         );
         msg = cannedWhatsappTemplateAwareReply(
           convLang,
-          whatsappTemplateContext.phase,
+          messagingTemplateContext.phase,
         );
       }
     } else {
       msg = cannedWhatsappTemplateAwareReply(
         convLang,
-        whatsappTemplateContext.phase,
+        messagingTemplateContext.phase,
       );
     }
     await deliverOutbound(msg, { skipNaturalize: true });
@@ -434,7 +453,7 @@ export async function processInboundMessaging(input: {
             })
             .eq("id", caseRow.id),
         );
-        if (input.channel === "whatsapp") {
+        if (isTextMessagingChannel(input.channel)) {
           await deliverOutbound(cannedCrmHandoffAfterSyncFail(convLang), {
             skipNaturalize: true,
           });
@@ -553,8 +572,8 @@ export async function processInboundMessaging(input: {
       let replyBody = scripted;
       let skipNat = false;
       if (
-        input.channel === "whatsapp" &&
-        whatsappConversationFeaturesEnabled() &&
+        isTextMessagingChannel(input.channel) &&
+        messagingAiConversationEnabled() &&
         process.env.OPENAI_API_KEY
       ) {
         try {
@@ -566,7 +585,8 @@ export async function processInboundMessaging(input: {
             language: convLang,
             reservationSummary: reservationBlurb(),
             passengerName: reservation.customerName,
-            whatsappTemplateContext,
+            whatsappTemplateContext: messagingTemplateContext,
+            channel: input.channel,
           });
           if (aiAsk) {
             replyBody = aiAsk;
@@ -608,14 +628,14 @@ export async function processInboundMessaging(input: {
 
   /** Fallback when no scripted branch sent this turn (e.g. awaiting_d1). Must not depend on WHATSAPP_AI_CONVERSATION — that flag only gates GPT polish, not whether we reply at all. */
   if (
-    input.channel === "whatsapp" &&
+    isTextMessagingChannel(input.channel) &&
     !outboundThisTurn &&
     orchestrationNow !== "closed" &&
     orchestrationNow !== "cancelled"
   ) {
     let msg: string;
     const useAiCatchAll =
-      whatsappConversationFeaturesEnabled() && Boolean(process.env.OPENAI_API_KEY);
+      messagingAiConversationEnabled() && Boolean(process.env.OPENAI_API_KEY);
     if (useAiCatchAll) {
       try {
         msg =
@@ -627,7 +647,8 @@ export async function processInboundMessaging(input: {
             reservationSummary: reservationBlurb(),
             bookingRef: reservation.externalBookingId,
             passengerName: reservation.customerName,
-            whatsappTemplateContext,
+            whatsappTemplateContext: messagingTemplateContext,
+            channel: input.channel,
           })) ?? cannedWhatsappCatchAllReply(convLang);
       } catch (e) {
         console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);

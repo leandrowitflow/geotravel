@@ -19,6 +19,8 @@ const TEMPLATE_LABELS: Record<GeotravelWhatsappLifecycleTemplate, string> = {
   satisfaction: "satisfaction",
 };
 
+type SendChannel = "whatsapp" | "sms";
+
 export function SendGeotravelWhatsAppButton({
   booking,
 }: {
@@ -39,8 +41,11 @@ export function SendGeotravelWhatsAppButton({
     return null;
   }
 
-  async function send(templateOverride?: GeotravelWhatsappLifecycleTemplate) {
-    const key = templateOverride ?? "auto";
+  async function send(
+    channel: SendChannel,
+    templateOverride?: GeotravelWhatsappLifecycleTemplate,
+  ) {
+    const key = `${channel}:${templateOverride ?? "auto"}`;
     setPending(key);
     setMsg(null);
     try {
@@ -49,6 +54,7 @@ export function SendGeotravelWhatsAppButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           booking,
+          channel,
           ...(templateOverride ? { templateOverride } : {}),
         }),
       });
@@ -82,10 +88,11 @@ export function SendGeotravelWhatsAppButton({
       const when = formatHoursUntilPickup(
         j.hoursUntilPickup ?? autoSelection.hoursUntilPickup,
       );
+      const via = j.channel ?? channel;
       setMsg({
         tone: "ok",
         text: [
-          `Sent ${tplLabel} (${j.templateLanguageSent ?? "en"}) via ${j.channel ?? "WhatsApp"} to ${j.destinationE164 ?? "?"}.`,
+          `Sent ${tplLabel} (${j.templateLanguageSent ?? "en"}) via ${via} to ${j.destinationE164 ?? "?"}.`,
           j.templateSelectionReason ? `(${j.templateSelectionReason}, ${when})` : null,
           j.whatsappFallbackToSms && j.whatsappAttemptError
             ? `WhatsApp failed: ${j.whatsappAttemptError}`
@@ -100,41 +107,60 @@ export function SendGeotravelWhatsAppButton({
     }
   }
 
+  function channelButtons(channel: SendChannel, labelPrefix: string) {
+    const autoKey = `${channel}:auto`;
+    return (
+      <div className="flex flex-col gap-1">
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => void send(channel)}
+          className={
+            channel === "sms"
+              ? "rounded border border-violet-600 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-900 hover:bg-violet-100 disabled:opacity-50 dark:border-violet-500 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+              : "rounded border border-teal-600 bg-teal-50 px-2 py-1 text-[11px] font-medium text-teal-900 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-500 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40"
+          }
+          title={
+            autoSelection.metaTemplateName === autoSelection.phase
+              ? autoSelection.reason
+              : `${autoSelection.reason} → Meta: ${autoSelection.metaTemplateName}`
+          }
+        >
+          {pending === autoKey
+            ? "Sending…"
+            : `${labelPrefix} · ${autoSelection.phase} (${autoSelection.language})`}
+        </button>
+        <div className="flex flex-wrap gap-1">
+          {GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES.map((t) => {
+            const k = `${channel}:${t}`;
+            return (
+              <button
+                key={k}
+                type="button"
+                disabled={pending !== null}
+                onClick={() => void send(channel, t)}
+                className="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
+                title={`Force ${t} via ${channel}`}
+              >
+                {pending === k ? "…" : TEMPLATE_LABELS[t]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex max-w-[min(100%,300px)] flex-col gap-1.5">
-      <button
-        type="button"
-        disabled={pending !== null}
-        onClick={() => void send()}
-        className="rounded border border-teal-600 bg-teal-50 px-2 py-1 text-[11px] font-medium text-teal-900 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-500 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40"
-        title={
-          autoSelection.metaTemplateName === autoSelection.phase
-            ? autoSelection.reason
-            : `${autoSelection.reason} → Meta: ${autoSelection.metaTemplateName}`
-        }
-      >
-        {pending === "auto"
-          ? "Sending…"
-          : `WhatsApp · ${autoSelection.phase} (${autoSelection.language})`}
-      </button>
+    <div className="flex max-w-[min(100%,300px)] flex-col gap-2">
+      {channelButtons("whatsapp", "WhatsApp")}
       <p className="text-[10px] leading-snug text-stone-500 dark:text-stone-400">
         Auto: {autoSelection.reason} ({formatHoursUntilPickup(autoSelection.hoursUntilPickup)}).
-        Test a specific template:
       </p>
-      <div className="flex flex-wrap gap-1">
-        {GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES.map((t) => (
-          <button
-            key={t}
-            type="button"
-            disabled={pending !== null}
-            onClick={() => void send(t)}
-            className="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200"
-            title={`Force ${t} (${autoSelection.language} on PT phones, en otherwise)`}
-          >
-            {pending === t ? "…" : TEMPLATE_LABELS[t]}
-          </button>
-        ))}
-      </div>
+      {channelButtons("sms", "SMS")}
+      <p className="text-[10px] leading-snug text-stone-500 dark:text-stone-400">
+        SMS uses the same lifecycle text from +351923250271 (Infobip). Set INFOBIP_* in env.
+      </p>
       {msg && (
         <span
           className={
