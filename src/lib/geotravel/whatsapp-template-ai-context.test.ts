@@ -30,19 +30,43 @@ describe("parseStoredOutboundTemplatePhase", () => {
 });
 
 describe("allowsOperationalEnrichmentForPhase", () => {
-  it("disallows enrichment for cancel and satisfaction", () => {
+  it("allows enrichment only for data and booking_confirmation", () => {
+    expect(allowsOperationalEnrichmentForPhase("data")).toBe(true);
+    expect(allowsOperationalEnrichmentForPhase("booking_confirmation")).toBe(
+      true,
+    );
+    expect(allowsOperationalEnrichmentForPhase("welcome_1")).toBe(false);
+    expect(allowsOperationalEnrichmentForPhase("welcome_2")).toBe(false);
     expect(allowsOperationalEnrichmentForPhase("canceled")).toBe(false);
     expect(allowsOperationalEnrichmentForPhase("satisfaction")).toBe(false);
-    expect(allowsOperationalEnrichmentForPhase("welcome_1")).toBe(true);
-    expect(allowsOperationalEnrichmentForPhase("data")).toBe(true);
   });
 });
 
 describe("buildWhatsappTemplateConversationContext", () => {
-  it("includes cancel-specific instructions", () => {
+  it("welcome phases focus on greeting not operational data", () => {
+    const w1 = buildWhatsappTemplateConversationContext({ phase: "welcome_1" });
+    expect(w1.aiInstructions).toMatch(/GREETING/i);
+    expect(w1.aiInstructions).toMatch(/Ask for passenger counts/i);
+    const w2 = buildWhatsappTemplateConversationContext({ phase: "welcome_2" });
+    expect(w2.aiInstructions).toMatch(/GREETING/i);
+  });
+
+  it("data phase focuses on collecting missing details", () => {
+    const ctx = buildWhatsappTemplateConversationContext({ phase: "data" });
+    expect(ctx.allowsOperationalEnrichment).toBe(true);
+    expect(ctx.aiInstructions).toMatch(/COLLECT MISSING/i);
+  });
+
+  it("canceled phase focuses on understanding why", () => {
     const ctx = buildWhatsappTemplateConversationContext({ phase: "canceled" });
     expect(ctx.allowsOperationalEnrichment).toBe(false);
-    expect(ctx.aiInstructions).toMatch(/cancelled/i);
-    expect(ctx.aiInstructions).toMatch(/Do NOT ask.*passenger counts/i);
+    expect(ctx.aiInstructions).toMatch(/WHY IT WAS CANCELLED/i);
+  });
+
+  it("satisfaction phase focuses on travel feedback", () => {
+    const ctx = buildWhatsappTemplateConversationContext({
+      phase: "satisfaction",
+    });
+    expect(ctx.aiInstructions).toMatch(/FEEDBACK/i);
   });
 });
