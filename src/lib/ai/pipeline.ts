@@ -22,12 +22,13 @@ import { SMS_LIFECYCLE_MAX_CHARS } from "@/lib/geotravel/build-lifecycle-sms-bod
 import {
   assistantLocaleLabel,
   assistantSystemPreamble,
-  cannedCrmHandoffAfterSyncFail as cannedCrmHandoffLocale,
-  cannedNeedsHumanAck as cannedNeedsHumanLocale,
-  cannedWhatsappCatchAllReply as cannedCatchAllLocale,
-  cannedWhatsappTemplateAwareReply as cannedTemplateAwareLocale,
+  minimalAssistantFallback,
   toAssistantLocale,
 } from "@/lib/ai/assistant-locale";
+import {
+  fieldIntentForAi,
+  type FieldKey,
+} from "@/lib/orchestration/field-prompts";
 
 function passengerContextLine(passengerName: string | null | undefined): string {
   const full = (passengerName ?? "").trim();
@@ -84,20 +85,27 @@ export type LanguageDetection = z.infer<typeof languageSchema>;
 
 export async function detectLanguageFromText(
   text: string,
+  opts?: { phoneSuggestsPortuguese?: boolean },
 ): Promise<LanguageDetection> {
   if (!hasOpenAiConfigured()) {
-    return { language: "en", confidence: 0.3 };
+    return { language: opts?.phoneSuggestsPortuguese ? "pt" : "en", confidence: 0.3 };
   }
+  const phoneHint = opts?.phoneSuggestsPortuguese
+    ? "The customer's phone number is Portuguese (+351). Short replies like Ok/Sim/4 often mean Portuguese."
+    : "";
   const { object } = await generateObject({
     model: openAiChatModel(),
     schema: languageSchema,
     prompt: `Detect whether this customer message is primarily in English or Portuguese.
 Return "pt" for Portuguese (Portugal or Brazil — treat both as pt).
 Return "en" for English or any other language (Spanish, French, German, etc.).
+${phoneHint}
 Text:\n"""${text.slice(0, 2000)}"""`,
   });
   return object;
 }
+
+export { minimalAssistantFallback };
 
 export function resolveConversationLanguage(
   detection: LanguageDetection,
@@ -190,7 +198,7 @@ Customer message:
 }
 
 export function cannedNeedsHumanAck(lang: SupportedLanguage): string {
-  return cannedNeedsHumanLocale(lang);
+  return minimalAssistantFallback(lang);
 }
 
 /** Rephrase scripted orchestration copy into natural WhatsApp tone (same facts / asks). */
@@ -237,10 +245,19 @@ Scripted intent to preserve:
   return object.message.trim() || null;
 }
 
-/** One natural message asking for the next enrichment field (replaces dry scripted prompt). */
+const FIELD_ORDER = [
+  "passenger_count_actual",
+  "children_count",
+  "cabin_luggage",
+  "checked_luggage",
+  "extras",
+  "reduced_mobility_present",
+  "additional_notes",
+] as const;
+
+/** Natural reply asking for the next operational detail we still need. */
 export async function generateWhatsappEnrichmentAsk(input: {
   fieldKey: string;
-  scriptedQuestion: string;
   userMessage: string;
   transcript: string;
   language: SupportedLanguage;
@@ -253,28 +270,27 @@ export async function generateWhatsappEnrichmentAsk(input: {
     return null;
   }
   const locale = toAssistantLocale(input.language);
+  const fieldIntent =
+    (FIELD_ORDER as readonly string[]).includes(input.fieldKey)
+      ? fieldIntentForAi(input.fieldKey as FieldKey)
+      : fieldIntentForAi("additional_notes");
   const { object } = await generateObject({
     model: openAiChatModel(),
     schema: enrichmentAskSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-You are helping finalise a private transfer booking on ${replyChannelLabel(input.channel)}.
+You are continuing a private transfer booking conversation on ${replyChannelLabel(input.channel)}.
 
-Write ONE short message in ${assistantLocaleLabel(locale)}:
+Write ONE natural message in ${assistantLocaleLabel(locale)}:
 ${lengthHint(input.channel)}
-- No bullet lists unless truly needed.
-- Ask for EXACTLY the same information as the scripted question — same topic, same intent.
-- Do not invent pickup times, prices, or policies. Do not promise refunds or cancellations.
-- If passenger name is on file, you may use the first name once; if not on file, do not invent.
-- Follow template-aware rules below — they override generic "confirm your trip" tone when they conflict.
+- First respond to what the customer just said (acknowledge, answer, or clarify) in a human way.
+- Then, if still needed, ask for: ${fieldIntent}.
+- Do not repeat the full booking itinerary unless they asked.
+- Do not invent pickup times, prices, or policies.
 
 ${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
-Field key (internal): ${input.fieldKey}
-Scripted question to cover (must not skip any part of this ask):
-"""${input.scriptedQuestion}"""
-
 Reservation: ${input.reservationSummary}
 
 Thread:
@@ -286,22 +302,86 @@ Customer just said:
   return object.message.trim() || null;
 }
 
-export function cannedWhatsappTemplateAwareReply(
-  lang: SupportedLanguage,
-  phase: WhatsappTemplateConversationContext["phase"],
-): string {
-  if (phase === "canceled" || phase === "satisfaction") {
-    return cannedTemplateAwareLocale(lang, phase);
+export type OrchestrationTurnKind =
+  | "consent_future_comms"
+  | "enrichment_complete_ack"
+  | "summarize_correction"
+  | "commercial_return"
+  | "crm_sync_failed"
+  | "present_summary";
+
+/** Natural reply for workflow steps (not lifecycle templates). */
+export async function generateOrchestrationTurnReply(input: {
+  kind: OrchestrationTurnKind;
+  userMessage: string;
+  transcript: string;
+  language: SupportedLanguage;
+  reservationSummary: string;
+  bookingRef: string | null;
+  passengerName?: string | null;
+  whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
+  channel?: MessagingChannel;
+  summaryText?: string;
+}): Promise<string | null> {
+  if (!hasOpenAiConfigured()) {
+    return null;
   }
-  return cannedWhatsappCatchAllReply(lang);
+  const locale = toAssistantLocale(input.language);
+  const intentByKind: Record<OrchestrationTurnKind, string> = {
+    consent_future_comms:
+      "After they confirmed trip details, ask politely if Geotravel may send helpful reminders about future transfers by WhatsApp or SMS. They should answer yes or no (sim/não, yes/no). One short question — no pressure if they decline.",
+    enrichment_complete_ack:
+      "Thank them warmly for the passenger/luggage/extras information. Say we have what we need for the driver and that we will confirm again the day before pickup. Do not ask more operational questions.",
+    summarize_correction:
+      "They replied that the summary is not correct. Apologise briefly for the mismatch and ask what to change (which field: passengers, bags, extras, notes). Invite them to write the correction in one message.",
+    commercial_return:
+      "They may be eligible for a return transfer. Offer once, naturally, to arrange the return leg — interested or not. No hard sell; one sentence plus space to answer.",
+    crm_sync_failed:
+      "We received their confirmation but had a technical issue saving to our systems. Reassure them we have their message and our team will complete the booking record manually and contact them only if needed.",
+    present_summary:
+      "Present the collected trip details from the summary below in natural prose (not a bullet questionnaire). Ask them to confirm everything is correct or tell us what to fix. Accept yes/no/sim/não style answers.",
+  };
+  const { object } = await generateObject({
+    model: openAiChatModel(),
+    schema: catchAllSchema,
+    prompt: `${assistantSystemPreamble(locale)}
+
+Workflow step (internal): ${input.kind}
+Goal: ${intentByKind[input.kind]}
+
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
+
+${passengerContextLine(input.passengerName)}
+Booking ref: ${input.bookingRef ?? "unknown"}
+Trip: ${input.reservationSummary}
+${input.summaryText ? `\nSummary to present:\n${input.summaryText}` : ""}
+
+Thread:
+${input.transcript || "(empty)"}
+
+Customer just said:
+"""${input.userMessage.slice(0, 2000)}"""
+
+Write ONE natural reply in ${assistantLocaleLabel(locale)}:
+${lengthHint(input.channel)}`,
+  });
+  return object.reply.trim() || null;
 }
 
+/** @deprecated Use minimalAssistantFallback — kept for imports during migration */
 export function cannedWhatsappCatchAllReply(lang: SupportedLanguage): string {
-  return cannedCatchAllLocale(lang);
+  return minimalAssistantFallback(lang);
 }
 
 export function cannedCrmHandoffAfterSyncFail(lang: SupportedLanguage): string {
-  return cannedCrmHandoffLocale(lang);
+  return minimalAssistantFallback(lang);
+}
+
+export function cannedWhatsappTemplateAwareReply(
+  lang: SupportedLanguage,
+  _phase: WhatsappTemplateConversationContext["phase"],
+): string {
+  return minimalAssistantFallback(lang);
 }
 
 /** When no scripted outbound ran (e.g. awaiting_d1 chit-chat), generate one helpful WhatsApp reply. */
