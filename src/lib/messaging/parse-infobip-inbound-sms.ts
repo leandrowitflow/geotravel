@@ -1,3 +1,5 @@
+import { canonicalizeInboundWebhookFrom } from "@/lib/orchestration/resolve-contact-for-inbound";
+
 /** Infobip MO_JSON_2 / inbound SMS webhook payload (see Infobip “Receive SMS” docs). */
 export type InfobipInboundSms = {
   fromE164: string;
@@ -14,12 +16,15 @@ type InfobipInboundResult = {
   cleanText?: string;
   messageId?: string;
   message?: { text?: string; type?: string };
+  content?: { text?: string };
 };
 
-function digitsToE164(digits: string): string | null {
-  const d = digits.replace(/\D/g, "");
-  if (d.length < 8) return null;
-  return `+${d}`;
+function firstInboundBodyText(...parts: (string | undefined)[]): string {
+  for (const part of parts) {
+    const t = (part ?? "").trim();
+    if (t) return t;
+  }
+  return "";
 }
 
 function extractFromResult(r: InfobipInboundResult): InfobipInboundSms | null {
@@ -27,12 +32,19 @@ function extractFromResult(r: InfobipInboundResult): InfobipInboundSms | null {
     r.message && typeof r.message === "object"
       ? (r.message.text ?? "").trim()
       : "";
-  const body = (r.cleanText ?? r.text ?? nestedText).trim();
+  const contentText =
+    r.content && typeof r.content === "object"
+      ? (r.content.text ?? "").trim()
+      : "";
+  const body = firstInboundBodyText(
+    r.cleanText,
+    r.text,
+    nestedText,
+    contentText,
+  );
   const fromRaw = (r.from ?? r.sender ?? "").trim();
   if (!fromRaw || !body) return null;
-  const fromE164 = fromRaw.startsWith("+")
-    ? `+${fromRaw.replace(/\D/g, "")}`
-    : digitsToE164(fromRaw);
+  const fromE164 = canonicalizeInboundWebhookFrom(fromRaw);
   if (!fromE164) return null;
   const toDigits = r.to?.replace(/\D/g, "") || undefined;
   return {
@@ -43,13 +55,7 @@ function extractFromResult(r: InfobipInboundResult): InfobipInboundSms | null {
   };
 }
 
-export function parseInfobipInboundSmsPayload(
-  payload: unknown,
-): InfobipInboundSms[] {
-  if (!payload || typeof payload !== "object") return [];
-  const o = payload as Record<string, unknown>;
-  const results = o.results;
-  if (!Array.isArray(results)) return [];
+function parseResultsArray(results: unknown[]): InfobipInboundSms[] {
   const out: InfobipInboundSms[] = [];
   for (const item of results) {
     if (!item || typeof item !== "object") continue;
@@ -57,6 +63,23 @@ export function parseInfobipInboundSmsPayload(
     if (parsed) out.push(parsed);
   }
   return out;
+}
+
+export function parseInfobipInboundSmsPayload(
+  payload: unknown,
+): InfobipInboundSms[] {
+  if (!payload || typeof payload !== "object") return [];
+  const o = payload as Record<string, unknown>;
+  const results = o.results;
+  if (Array.isArray(results)) {
+    return parseResultsArray(results);
+  }
+  const messages = o.messages;
+  if (Array.isArray(messages)) {
+    return parseResultsArray(messages);
+  }
+  const single = extractFromResult(o as InfobipInboundResult);
+  return single ? [single] : [];
 }
 
 /** Keys present when parser returns empty — helps debug Infobip config. */

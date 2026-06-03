@@ -32,10 +32,16 @@ export async function sendViaPreferredChannel(input: {
     templateVariables: input.templateVariables,
     linkPreview: input.linkPreview,
   };
+  const smsOutboundText = (input.smsBody ?? input.body).trim().slice(0, 1600);
+
   let result: SendResult =
     input.preferred === "whatsapp"
       ? await sendWhatsAppMessage(base)
-      : await sendInfobipSms({ ...base, channel: "sms" });
+      : await sendInfobipSms({
+          ...base,
+          channel: "sms",
+          body: smsOutboundText,
+        });
 
   let whatsappErrorBeforeSmsFallback: string | undefined;
   if (
@@ -50,11 +56,10 @@ export async function sendViaPreferredChannel(input: {
       reservationId: input.reservationId,
       channel: "sms",
     });
-    const fallbackText = (input.smsBody ?? input.body).trim();
     result = await sendInfobipSms({
       ...base,
       channel: "sms",
-      body: fallbackText.slice(0, 1600),
+      body: smsOutboundText,
     });
   }
 

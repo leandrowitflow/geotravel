@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import {
   describeInfobipInboundPayload,
   parseInfobipInboundSmsPayload,
@@ -6,13 +6,19 @@ import {
 import { processInboundMessaging } from "@/lib/orchestration/process-inbound-message";
 
 /**
- * Infobip inbound SMS (MO). Configure on purchased number +351923250271:
- * Channels and Numbers → number → SMS → Keyword (can be empty) → Forward to HTTP
- * → POST → MO_JSON_2 → https://YOUR_APP/api/webhooks/infobip/sms
+ * Infobip inbound SMS (MO). No extra product — pay per MO segment.
  *
- * Receiving SMS on a bought number does not need a separate product — you pay
- * per inbound MO segment (see Infobip pricing). Configuration is in the portal.
+ * Option A (number override): Channels and Numbers → +351923250271 → SMS →
+ * Forward to HTTP → POST MO_JSON_2 → this URL.
+ *
+ * Option B (subscription): Developer Tools → Subscriptions Management →
+ * INBOUND_MESSAGE + SMS + MO_JSON_2 → notification profile webhook = this URL;
+ * number default must be Follow subscription and match that subscription.
+ *
+ * If the number is Follow subscription with no subscription, MO appears in logs only.
  */
+export const maxDuration = 60;
+
 export async function GET() {
   return NextResponse.json({
     ok: true,
@@ -39,36 +45,45 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, processed: 0, parsed: 0 });
   }
 
-  let processed = 0;
-  for (const msg of messages) {
-    try {
-      const result = await processInboundMessaging({
-        channel: "sms",
-        fromE164: msg.fromE164,
-        body: msg.body,
-        providerMessageId: msg.providerMessageId,
-      });
-      if (!result.ok) {
-        console.warn("[infobip sms webhook] pipeline:", result.error, {
-          from: msg.fromE164,
-          to: msg.toDigits,
+  const runInbound = async () => {
+    let processed = 0;
+    for (const msg of messages) {
+      try {
+        const result = await processInboundMessaging({
+          channel: "sms",
+          fromE164: msg.fromE164,
+          body: msg.body,
+          providerMessageId: msg.providerMessageId,
         });
-      } else {
-        processed += 1;
-        console.info("[infobip sms webhook] processed inbound", {
-          from: msg.fromE164,
-          to: msg.toDigits,
-          excerpt: msg.body.slice(0, 80),
-        });
+        if (!result.ok) {
+          console.warn("[infobip sms webhook] pipeline:", result.error, {
+            from: msg.fromE164,
+            to: msg.toDigits,
+          });
+        } else {
+          processed += 1;
+          console.info("[infobip sms webhook] processed inbound", {
+            from: msg.fromE164,
+            to: msg.toDigits,
+            excerpt: msg.body.slice(0, 80),
+          });
+        }
+      } catch (e) {
+        console.error("[infobip sms webhook] processInboundMessaging failed:", e);
       }
-    } catch (e) {
-      console.error("[infobip sms webhook] processInboundMessaging failed:", e);
     }
-  }
+    return processed;
+  };
+
+  const awaitEnv = process.env.INFOBIP_WEBHOOK_AWAIT_PROCESSING?.trim().toLowerCase();
+  /** Default on: AI reply must finish before handler returns (same as WhatsApp). */
+  const awaitProcessing = awaitEnv !== "false";
+  const processed = awaitProcessing ? await runInbound() : (after(runInbound), 0);
 
   return NextResponse.json({
     ok: true,
     processed,
     received: messages.length,
+    awaited: awaitProcessing,
   });
 }
