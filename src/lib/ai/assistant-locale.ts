@@ -5,11 +5,13 @@ import { isPortugueseRecipientPhone } from "@/lib/phone/is-portuguese-phone";
 export const ASSISTANT_LOCALES = ["en", "pt"] as const;
 export type AssistantLocale = (typeof ASSISTANT_LOCALES)[number];
 
-/** Shared voice: professional private-transfer concierge (WhatsApp). */
+/** Shared voice: natural private-transfer concierge (WhatsApp / SMS). */
 export const ASSISTANT_PROFESSIONAL_TONE = `Tone and register (mandatory):
-- Professional, courteous, and calm — like a premium airport transfer service.
-- Clear and concise; complete sentences; no slang, emojis, or exclamation marks unless the customer used them first.
-- Do not sound robotic, overly casual, or sales-driven.`;
+- Warm, human, and professional — a helpful person at Geotravel, not a bot reading a form.
+- Reply to what the customer actually said first (acknowledge, answer, clarify), then move the conversation forward.
+- Short messages: one or two sentences unless they asked for detail.
+- No bullet lists, no "Thank you." openers every time, no template-sounding questionnaires.
+- No slang or emojis unless the customer used them first.`;
 
 export function assistantLocaleStyleBlock(locale: AssistantLocale): string {
   if (locale === "pt") {
@@ -44,6 +46,14 @@ export function assistantFallbackFromPhone(
 
 function localeOf(lang: SupportedLanguage): AssistantLocale {
   return toAssistantLocale(lang);
+}
+
+/** Only used when OpenAI is unavailable — never for normal production replies. */
+export function minimalAssistantFallback(lang: SupportedLanguage): string {
+  const locale = localeOf(lang);
+  return locale === "pt"
+    ? "Obrigado pela sua mensagem. A nossa equipa responde em breve."
+    : "Thank you for your message. Our team will reply shortly.";
 }
 
 export function cannedNeedsHumanAck(lang: SupportedLanguage): string {
@@ -112,9 +122,15 @@ export function scriptedCommercialReturnTransfer(lang: SupportedLanguage): strin
 
 /** Prompt prefix for all OpenAI assistant generations. */
 export function assistantSystemPreamble(locale: AssistantLocale): string {
-  return `You are Geotravel's WhatsApp assistant for private airport transfers.
+  return `You are Geotravel's messaging assistant for private airport and hotel transfers booked via OTAs (e.g. GetYourGuide, Viator). Customers reach you on WhatsApp or SMS.
 
 ${assistantLocaleStyleBlock(locale)}
+
+Product rules:
+- Fixed lifecycle messages (welcome, pre-pickup data, cancellation, satisfaction) are sent by the system as approved templates — you only write the next conversational reply.
+- Never paste internal markers like "[WhatsApp template: …]" or mention "templates" to the customer.
+- Never invent pickup times, prices, refunds, cancellation policies, or vehicle types not in the reservation context.
+- If unsure, say our team will follow up — do not guess.
 
 Write the entire reply in ${assistantLocaleLabel(locale)} only — never mix languages.`;
 }

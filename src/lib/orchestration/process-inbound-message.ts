@@ -7,25 +7,19 @@ import type {
 } from "@/db/schema";
 import { assertNoError, takeRows } from "@/db/supabase-helpers";
 import {
-  cannedCrmHandoffAfterSyncFail,
-  cannedNeedsHumanAck,
-  cannedWhatsappCatchAllReply,
-  cannedWhatsappTemplateAwareReply,
   detectLanguageFromText,
   generateInboundAssistantReply,
+  generateOrchestrationTurnReply,
   generateWhatsappCatchAllReply,
   generateWhatsappEnrichmentAsk,
   generateWhatsappTemplateAwareReply,
-  naturalizeWhatsappReply,
+  minimalAssistantFallback,
   resolveConversationLanguage,
+  type OrchestrationTurnKind,
 } from "@/lib/ai/pipeline";
-import {
-  assistantFallbackFromPhone,
-  scriptedCommercialReturnTransfer,
-  scriptedConsentFutureComms,
-  scriptedEnrichmentCompleteAck,
-  scriptedSummarizeCorrectionAsk,
-} from "@/lib/ai/assistant-locale";
+import { assistantFallbackFromPhone } from "@/lib/ai/assistant-locale";
+import { hasOpenAiConfigured } from "@/lib/ai/openai-client";
+import { isPortugueseRecipientPhone } from "@/lib/phone/is-portuguese-phone";
 import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import { applyInboundExtractionToCaseRow } from "@/lib/orchestration/apply-inbound-extraction";
 import { resolveMessagingTemplateContextForCase } from "@/lib/orchestration/resolve-whatsapp-template-context";
@@ -45,7 +39,7 @@ import {
   computeOfferEligibility,
   recordConsentFromText,
 } from "./commercial-layer";
-import { nextMissingField, promptForField } from "./field-prompts";
+import { nextMissingField } from "./field-prompts";
 import { resolveInboundCaseAndContact } from "./resolve-inbound-case-and-contact";
 import { assertTransition, type OrchestrationState } from "./state-machine";
 
@@ -187,12 +181,21 @@ export async function processInboundMessaging(input: {
     return { ok: true, replied: outboundSent };
   }
 
+  const phoneForLang =
+    contact.phone ?? reservation.sourcePhone ?? input.fromE164;
+  const phoneSuggestsPortuguese = isPortugueseRecipientPhone(phoneForLang);
+
   let langDet: Awaited<ReturnType<typeof detectLanguageFromText>>;
   try {
-    langDet = await detectLanguageFromText(input.body);
+    langDet = await detectLanguageFromText(input.body, {
+      phoneSuggestsPortuguese,
+    });
   } catch (e) {
-    console.warn("[pipeline] detectLanguageFromText failed, falling back to en:", e);
-    langDet = { language: "en", confidence: 0.3 };
+    console.warn("[pipeline] detectLanguageFromText failed, falling back:", e);
+    langDet = {
+      language: phoneSuggestsPortuguese ? "pt" : "en",
+      confidence: 0.3,
+    };
   }
   const preferred =
     (contact.preferredLanguage as SupportedLanguage) ||
@@ -249,34 +252,107 @@ export async function processInboundMessaging(input: {
       .join(" · ");
   }
 
-  async function deliverOutbound(
-    text: string,
-    opts?: { skipNaturalize?: boolean },
-  ) {
+  function aiConversationReady(): boolean {
+    return messagingAiConversationEnabled() && hasOpenAiConfigured();
+  }
+
+  async function resolveOrchestrationReply(
+    kind: OrchestrationTurnKind,
+    extra?: { summaryText?: string },
+  ): Promise<string> {
+    if (!aiConversationReady()) {
+      return minimalAssistantFallback(convLang);
+    }
+    try {
+      const text = await generateOrchestrationTurnReply({
+        kind,
+        userMessage: input.body,
+        transcript: await loadTranscript(),
+        language: convLang,
+        reservationSummary: reservationBlurb(),
+        bookingRef: reservation.externalBookingId,
+        passengerName: reservation.customerName,
+        whatsappTemplateContext: messagingTemplateContext,
+        channel: input.channel,
+        summaryText: extra?.summaryText,
+      });
+      if (text) return text;
+    } catch (e) {
+      console.warn(`[pipeline] generateOrchestrationTurnReply(${kind}) failed:`, e);
+    }
+    return minimalAssistantFallback(convLang);
+  }
+
+  async function resolveEnrichmentAsk(fieldKey: string): Promise<string> {
+    if (!aiConversationReady()) {
+      return minimalAssistantFallback(convLang);
+    }
+    try {
+      const text = await generateWhatsappEnrichmentAsk({
+        fieldKey,
+        userMessage: input.body,
+        transcript: await loadTranscript(),
+        language: convLang,
+        reservationSummary: reservationBlurb(),
+        passengerName: reservation.customerName,
+        whatsappTemplateContext: messagingTemplateContext,
+        channel: input.channel,
+      });
+      if (text) return text;
+    } catch (e) {
+      console.warn("[pipeline] generateWhatsappEnrichmentAsk failed:", e);
+    }
+    return minimalAssistantFallback(convLang);
+  }
+
+  async function resolveTemplateAwareReply(): Promise<string> {
+    if (!aiConversationReady() || !messagingTemplateContext) {
+      return minimalAssistantFallback(convLang);
+    }
+    try {
+      const text = await generateWhatsappTemplateAwareReply({
+        userMessage: input.body,
+        language: convLang,
+        transcript: await loadTranscript(),
+        reservationSummary: reservationBlurb(),
+        bookingRef: reservation.externalBookingId,
+        passengerName: reservation.customerName,
+        whatsappTemplateContext: messagingTemplateContext,
+        channel: input.channel,
+      });
+      if (text) return text;
+    } catch (e) {
+      console.warn("[pipeline] generateWhatsappTemplateAwareReply failed:", e);
+    }
+    return minimalAssistantFallback(convLang);
+  }
+
+  async function resolveCatchAllReply(orchestrationState: string): Promise<string> {
+    if (!aiConversationReady()) {
+      return minimalAssistantFallback(convLang);
+    }
+    try {
+      const text = await generateWhatsappCatchAllReply({
+        userMessage: input.body,
+        language: convLang,
+        orchestrationState,
+        transcript: await loadTranscript(),
+        reservationSummary: reservationBlurb(),
+        bookingRef: reservation.externalBookingId,
+        passengerName: reservation.customerName,
+        whatsappTemplateContext: messagingTemplateContext,
+        channel: input.channel,
+      });
+      if (text) return text;
+    } catch (e) {
+      console.warn("[pipeline] generateWhatsappCatchAllReply failed:", e);
+    }
+    return minimalAssistantFallback(convLang);
+  }
+
+  async function deliverOutbound(text: string) {
     outboundThisTurn = true;
     let out = text;
-    if (
-      input.channel === "whatsapp" &&
-      isTextMessagingChannel(input.channel) &&
-      messagingAiConversationEnabled() &&
-      !opts?.skipNaturalize
-    ) {
-      try {
-        const n = await naturalizeWhatsappReply({
-          scriptedIntent: text,
-          userMessage: input.body,
-          transcript: await loadTranscript(),
-          language: convLang,
-          reservationSummary: reservationBlurb(),
-          passengerName: reservation.customerName,
-          whatsappTemplateContext: messagingTemplateContext,
-          channel: input.channel,
-        });
-        if (n) out = n;
-      } catch (e) {
-        console.warn("[pipeline] naturalizeWhatsappReply failed, sending scripted text:", e);
-      }
-    }
     if (input.channel === "sms") {
       out = clampSmsReply(out);
     }
@@ -321,8 +397,8 @@ export async function processInboundMessaging(input: {
       } catch (e) {
         console.warn("[processInboundMessaging] generateInboundAssistantReply failed:", e);
       }
-      const reply = aiText ?? cannedNeedsHumanAck(convLang);
-      await deliverOutbound(reply, { skipNaturalize: true });
+      const reply = aiText ?? minimalAssistantFallback(convLang);
+      await deliverOutbound(reply);
     }
     return { ok: true, replied: outboundSent };
   }
@@ -330,40 +406,7 @@ export async function processInboundMessaging(input: {
   let state = caseRow.orchestrationState as OrchestrationState;
 
   if (templateOnlyConversation && messagingTemplateContext) {
-    let msg: string;
-    const useAi =
-      messagingAiConversationEnabled() && Boolean(process.env.OPENAI_API_KEY);
-    if (useAi) {
-      try {
-        msg =
-          (await generateWhatsappTemplateAwareReply({
-            userMessage: input.body,
-            language: convLang,
-            transcript: await loadTranscript(),
-            reservationSummary: reservationBlurb(),
-            bookingRef: reservation.externalBookingId,
-            passengerName: reservation.customerName,
-            whatsappTemplateContext: messagingTemplateContext,
-            channel: input.channel,
-          })) ??
-          cannedWhatsappTemplateAwareReply(convLang, messagingTemplateContext.phase);
-      } catch (e) {
-        console.warn(
-          "[processInboundMessaging] generateWhatsappTemplateAwareReply failed:",
-          e,
-        );
-        msg = cannedWhatsappTemplateAwareReply(
-          convLang,
-          messagingTemplateContext.phase,
-        );
-      }
-    } else {
-      msg = cannedWhatsappTemplateAwareReply(
-        convLang,
-        messagingTemplateContext.phase,
-      );
-    }
-    await deliverOutbound(msg, { skipNaturalize: true });
+    await deliverOutbound(await resolveTemplateAwareReply());
     return { ok: true, replied: outboundSent };
   }
 
@@ -397,6 +440,7 @@ export async function processInboundMessaging(input: {
       contact,
       convLang,
       deliverOutbound,
+      () => resolveOrchestrationReply("commercial_return"),
     );
     return { ok: true, replied: outboundSent };
   }
@@ -432,7 +476,9 @@ export async function processInboundMessaging(input: {
         })
         .eq("id", caseRow.id),
     );
-    await deliverOutbound(scriptedConsentFutureComms(convLang));
+    await deliverOutbound(
+      await resolveOrchestrationReply("consent_future_comms"),
+    );
     return { ok: true, replied: outboundSent };
   }
 
@@ -473,9 +519,9 @@ export async function processInboundMessaging(input: {
             .eq("id", caseRow.id),
         );
         if (isTextMessagingChannel(input.channel)) {
-          await deliverOutbound(cannedCrmHandoffAfterSyncFail(convLang), {
-            skipNaturalize: true,
-          });
+          await deliverOutbound(
+            await resolveOrchestrationReply("crm_sync_failed"),
+          );
         }
         return { ok: true, replied: outboundSent };
       }
@@ -505,7 +551,9 @@ export async function processInboundMessaging(input: {
         reservationId: reservation.id,
         payload: offer,
       });
-      await deliverOutbound(scriptedEnrichmentCompleteAck(convLang));
+      await deliverOutbound(
+        await resolveOrchestrationReply("enrichment_complete_ack"),
+      );
       return { ok: true, replied: outboundSent };
     }
     assertTransition(state, "collect_missing");
@@ -519,7 +567,9 @@ export async function processInboundMessaging(input: {
         })
         .eq("id", caseRow.id),
     );
-    await deliverOutbound(scriptedSummarizeCorrectionAsk(convLang));
+    await deliverOutbound(
+      await resolveOrchestrationReply("summarize_correction"),
+    );
     return { ok: true, replied: outboundSent };
   }
 
@@ -530,6 +580,7 @@ export async function processInboundMessaging(input: {
       contact,
       convLang,
       deliverOutbound,
+      () => resolveOrchestrationReply("commercial_return"),
     );
     return { ok: true, replied: outboundSent };
   }
@@ -587,40 +638,12 @@ export async function processInboundMessaging(input: {
         reservationId: reservation.id,
         payload: { field: missing },
       });
-      const scripted = promptForField(missing, convLang);
-      let replyBody = scripted;
-      let skipNat = false;
-      if (
-        isTextMessagingChannel(input.channel) &&
-        messagingAiConversationEnabled() &&
-        process.env.OPENAI_API_KEY
-      ) {
-        try {
-          const aiAsk = await generateWhatsappEnrichmentAsk({
-            fieldKey: missing,
-            scriptedQuestion: scripted,
-            userMessage: input.body,
-            transcript: await loadTranscript(),
-            language: convLang,
-            reservationSummary: reservationBlurb(),
-            passengerName: reservation.customerName,
-            whatsappTemplateContext: messagingTemplateContext,
-            channel: input.channel,
-          });
-          if (aiAsk) {
-            replyBody = aiAsk;
-            skipNat = true;
-          }
-        } catch (e) {
-          console.warn("[processInboundMessaging] generateWhatsappEnrichmentAsk failed:", e);
-        }
-      }
-      await deliverOutbound(replyBody, { skipNaturalize: skipNat });
+      await deliverOutbound(await resolveEnrichmentAsk(missing));
       return { ok: true, replied: outboundSent };
     }
 
     assertTransition("collect_missing", "summarize_confirm");
-    const summary = formatSummary(merged, convLang);
+    const summary = formatSummaryForAi(merged);
     assertNoError(
       "case summarize_confirm",
       await sb
@@ -632,7 +655,11 @@ export async function processInboundMessaging(input: {
         })
         .eq("id", caseRow.id),
     );
-    await deliverOutbound(summary);
+    await deliverOutbound(
+      await resolveOrchestrationReply("present_summary", {
+        summaryText: summary,
+      }),
+    );
     return { ok: true, replied: outboundSent };
   }
 
@@ -652,31 +679,7 @@ export async function processInboundMessaging(input: {
     orchestrationNow !== "closed" &&
     orchestrationNow !== "cancelled"
   ) {
-    let msg: string;
-    const useAiCatchAll =
-      messagingAiConversationEnabled() && Boolean(process.env.OPENAI_API_KEY);
-    if (useAiCatchAll) {
-      try {
-        msg =
-          (await generateWhatsappCatchAllReply({
-            userMessage: input.body,
-            language: convLang,
-            orchestrationState: orchestrationNow,
-            transcript: await loadTranscript(),
-            reservationSummary: reservationBlurb(),
-            bookingRef: reservation.externalBookingId,
-            passengerName: reservation.customerName,
-            whatsappTemplateContext: messagingTemplateContext,
-            channel: input.channel,
-          })) ?? cannedWhatsappCatchAllReply(convLang);
-      } catch (e) {
-        console.warn("[processInboundMessaging] generateWhatsappCatchAllReply failed:", e);
-        msg = cannedWhatsappCatchAllReply(convLang);
-      }
-    } else {
-      msg = cannedWhatsappCatchAllReply(convLang);
-    }
-    await deliverOutbound(msg, { skipNaturalize: true });
+    await deliverOutbound(await resolveCatchAllReply(orchestrationNow));
   }
 
   return { ok: true, replied: outboundSent };
@@ -687,7 +690,8 @@ async function sendCommercialIfEligible(
   reservation: ReservationRow,
   contact: ContactRow,
   convLang: SupportedLanguage,
-  deliver: (text: string, opts?: { skipNaturalize?: boolean }) => Promise<void>,
+  deliver: (text: string) => Promise<void>,
+  commercialReply: () => Promise<string>,
 ) {
   const offer = (caseRow.offerSignal ?? {}) as {
     return_transfer_eligible?: boolean;
@@ -699,7 +703,7 @@ async function sendCommercialIfEligible(
       reservationId: reservation.id,
       payload: { type: "return_transfer" },
     });
-    await deliver(scriptedCommercialReturnTransfer(convLang));
+    await deliver(await commercialReply());
   }
   assertTransition(
     caseRow.orchestrationState as OrchestrationState,
@@ -786,16 +790,8 @@ async function sendReply(
   return true;
 }
 
-function formatSummary(data: CollectedDataJson, lang: SupportedLanguage): string {
+/** Facts for the AI to present naturally (no rigid yes/no footer). */
+function formatSummaryForAi(data: CollectedDataJson): string {
   const rows = buildCollectedDataDisplayRows(data);
-  const lines = [lang === "pt" ? "Resumo:" : "Summary:"];
-  for (const row of rows) {
-    lines.push(`${row.label}: ${row.value}`);
-  }
-  lines.push(
-    lang === "pt"
-      ? "Está tudo correto? Responda SIM ou NÃO."
-      : "Is this correct? Please reply YES or NO.",
-  );
-  return lines.join("\n");
+  return rows.map((row) => `${row.label}: ${row.value}`).join("\n");
 }

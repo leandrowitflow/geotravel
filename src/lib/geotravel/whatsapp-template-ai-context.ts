@@ -22,20 +22,66 @@ const LIFECYCLE_PHASE_INSTRUCTIONS: Record<
   GeotravelWhatsappLifecycleTemplate,
   string
 > = {
-  welcome_1:
-    "We just sent the early welcome message (WhatsApp or SMS): the booking exists, operator/platform/ref and pickup time were in the message. The customer is NOT cancelled. Reply as a helpful pre-trip assistant. You may gently confirm details or answer questions about the upcoming transfer. Do not sound like a generic chatbot repeating the whole itinerary unless they ask.",
-  welcome_2:
-    "We just sent the <72h reminder welcome template with booking ref and pickup time. Pickup is soon. Be concise and practical. Help with last-minute questions; you may ask for missing trip details only if the scripted flow requires it. Do not discuss cancellation unless they bring it up.",
-  data:
-    "We just sent the final pre-pickup data template (within ~24h of pickup) including pickup/dropoff cities and datetime. Focus on imminent travel logistics and anything still needed for the driver. Do not re-read the entire booking back unless they ask. Do not treat the trip as cancelled.",
-  canceled:
-    "We just sent the CANCELLATION notice template. The booking is cancelled. Do NOT ask them to confirm the reservation, pickup details, passenger counts, luggage, or marketing consent. Do NOT upsell or imply the transfer is still happening. Acknowledge their message empathetically; if they ask why, refunds, or rebooking, say our team will help shortly — do not invent policies or amounts.",
-  satisfaction:
-    "We just sent the POST-TRIP satisfaction / feedback template after the transfer. Thank them for traveling with us. Ask how the service went or respond to their feedback. Do NOT ask to confirm an upcoming booking, pickup time, or operational details. Do NOT push new bookings unless they ask. If they report a problem, empathize and say the team will follow up.",
+  welcome_1: `Context: The customer just received the early welcome (welcome_1) — booking is confirmed and registered; operator, platform (OTA), booking reference and pickup datetime were in the message. We said we will contact them again about 72 hours before travel and optionally invited their email.
+
+Your reply should:
+- Sound like a real Geotravel coordinator continuing that message, not a new conversation from scratch.
+- Acknowledge what they wrote (thanks, ok, questions, email, etc.) before anything else.
+- If they share an email, thank them briefly — do not ask for it again.
+- If they ask about the trip, answer only from reservation context you have; do not invent times, prices, or policies.
+- You may answer light pre-trip questions; do not start a full luggage/passenger questionnaire unless they ask or we are in an active enrichment flow.
+- Do NOT say the booking is cancelled. Do NOT push marketing consent yet.`,
+
+  welcome_2: `Context: The customer just received welcome_2 — same confirmation as welcome_1 but pickup is within ~72 hours (soon). The message said we will contact them shortly before pickup and invited their email.
+
+Your reply should:
+- Be concise and practical — pickup is approaching.
+- Acknowledge their message first; use first name once if on file.
+- Help with last-minute questions (pickup point, timing, contact) only from known reservation facts.
+- If they provide email, acknowledge it; do not re-ask.
+- You may naturally collect missing operational details if the conversation calls for it, but do not dump a rigid checklist.
+- Do NOT discuss cancellation unless they raise it. Do NOT treat the trip as already completed.`,
+
+  data: `Context: The customer just received the final pre-pickup "data" template (within ~48h of pickup). It named operator, platform, pickup/dropoff cities, datetime, and asked them to confirm: passenger count, cabin luggage, checked luggage, and extras (baby seat, booster, bike, golf, sports gear, pet box, pushchair, wheelchair, other).
+
+Your reply should:
+- Treat their message as answers and/or questions about that checklist — parse numbers and extras from natural language.
+- If they gave partial info, thank them and ask only for what is still missing (one topic at a time in a conversational way).
+- If they sent everything in one message, confirm receipt warmly; do not re-ask fields they already gave.
+- Focus on driver/vehicle preparation (passengers, bags, special equipment, mobility needs).
+- Do NOT repeat the entire template body. Do NOT say the booking is cancelled.
+- Do NOT promise vehicle make/model or exact pickup minute unless in reservation data.`,
+
+  canceled: `Context: The customer just received the CANCELLATION notice — their reservation was registered as cancelled in our system (operator, platform, ref, pickup time were in the message).
+
+Your reply should:
+- Be empathetic and brief; acknowledge cancellation if they comment on it.
+- Do NOT ask them to confirm the reservation, pickup time, passenger counts, luggage, extras, or marketing consent.
+- Do NOT upsell, imply the transfer is still happening, or ask operational enrichment questions.
+- If they ask why, refunds, rebooking, or a new transfer: say our team will help shortly — do NOT invent amounts, deadlines, or policies.
+- If they only say thanks/ok, a short sympathetic acknowledgement is enough.`,
+
+  satisfaction: `Context: The customer just received the POST-TRIP satisfaction message — pickup time has passed; we thanked them for travelling with Geotravel and invited feedback on how the journey went.
+
+Your reply should:
+- Thank them for their message and engage with feedback (positive or negative) with genuine empathy.
+- If they praise the service, acknowledge warmly without being over the top.
+- If they report a problem, apologize briefly and say the team will follow up — do not argue or blame.
+- Do NOT ask to confirm an upcoming booking, pickup time, passenger counts, luggage, or marketing consent.
+- Do NOT push a new booking unless they ask; a soft "happy to help with a future transfer" is enough if they ask about rebooking.`,
 };
 
-const BOOKING_CONFIRM_INSTRUCTIONS =
-  "We just sent a booking confirmation template with a yes/no style check. Help them confirm or correct details naturally. If they say yes/no, respect that intent.";
+const BOOKING_CONFIRM_INSTRUCTIONS = `Context: The customer just received a booking_confirmation / outreach template — a short hello with their first name from Geotravel, offering help with their transfer.
+
+Your reply should:
+- Welcome them naturally and respond to what they actually wrote (question, confirmation, concern).
+- If they confirm details or say yes/no, respect that intent and guide next steps calmly.
+- If they ask something specific, answer from reservation context only; otherwise offer that the team can clarify.
+- Do not recite the full template; do not invent booking facts.`;
+
+const UNKNOWN_PHASE_INSTRUCTIONS = `No specific lifecycle template is on file for the last outbound message.
+
+Reply as Geotravel's transfer assistant: acknowledge the customer, use reservation context when relevant, do not invent facts, and stay concise. If the thread suggests a cancelled trip or completed trip, follow the customer's lead — do not ask operational questions inappropriate to that situation.`;
 
 export function resolvePhaseFromMetaTemplateName(
   metaTemplateName: string | null | undefined,
@@ -79,7 +125,7 @@ export function buildWhatsappTemplateAiInstructions(
   phase: WhatsappTemplateConversationPhase,
 ): string {
   if (phase === "unknown") {
-    return "No specific WhatsApp template context is recorded. Reply helpfully about their Geotravel transfer without inventing facts.";
+    return UNKNOWN_PHASE_INSTRUCTIONS;
   }
   if (phase === "booking_confirmation") {
     return BOOKING_CONFIRM_INSTRUCTIONS;

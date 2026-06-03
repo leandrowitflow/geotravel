@@ -129,6 +129,28 @@ export function promptForField(
   return COPY[field][lang] ?? COPY[field].en;
 }
 
+/** Internal intent for AI — not sent verbatim to customers. */
+const FIELD_INTENT_EN: Record<FieldKey, string> = {
+  passenger_count_actual:
+    "the total number of passengers travelling (adults and children combined)",
+  children_count:
+    "how many children are travelling and each child's age (needed for child seats)",
+  cabin_luggage:
+    "how many pieces of hand/cabin luggage they will bring",
+  checked_luggage:
+    "how many checked/hold suitcases they will bring",
+  extras:
+    "whether they need special equipment: baby seat, booster, bicycle, golf bag, sports gear, pet transport box, pushchair/stroller, wheelchair, or other — or confirm they need none",
+  reduced_mobility_present:
+    "whether anyone has reduced mobility needs the driver should know about",
+  additional_notes:
+    "any other practical detail for the driver (flight number, meet point, special instructions)",
+};
+
+export function fieldIntentForAi(field: FieldKey): string {
+  return FIELD_INTENT_EN[field];
+}
+
 /** Maps orchestration pending_field_key to prompt copy key. */
 export function promptForFieldKey(
   fieldKey: string,
