@@ -1,4 +1,5 @@
 import { infobipSmsSender } from "./infobip-config";
+import { isPublicHttpsWebhookUrl } from "./infobip-inbound-webhook-url";
 import type { OutboundMessage, SendResult } from "./types";
 
 /** Single-line SMS avoids multipart/newline issues on some PT routes. */
@@ -45,7 +46,16 @@ export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> 
     return { ok: false, error: "infobip_invalid_destination" };
   }
 
-  const notifyUrl = process.env.INFOBIP_SMS_NOTIFY_URL?.trim();
+  const notifyUrlRaw = process.env.INFOBIP_SMS_NOTIFY_URL?.trim();
+  const notifyUrl =
+    notifyUrlRaw && isPublicHttpsWebhookUrl(notifyUrlRaw)
+      ? notifyUrlRaw
+      : undefined;
+  if (notifyUrlRaw && !notifyUrl) {
+    console.warn(
+      "[infobip] INFOBIP_SMS_NOTIFY_URL ignored — must be a public https URL, not localhost.",
+    );
+  }
 
   const messagePayload: Record<string, unknown> = {
     sender,
