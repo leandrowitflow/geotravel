@@ -1,4 +1,5 @@
 import { after, NextResponse } from "next/server";
+import { isInfobipSmsConfigured } from "@/lib/messaging/infobip-config";
 import {
   describeInfobipInboundPayload,
   parseInfobipInboundSmsPayload,
@@ -14,25 +15,45 @@ import { processInboundMessaging } from "@/lib/orchestration/process-inbound-mes
  * Option B (subscription): Developer Tools → Subscriptions Management →
  * INBOUND_MESSAGE + SMS + MO_JSON_2 → notification profile webhook = this URL;
  * number default must be Follow subscription and match that subscription.
- *
- * If the number is Follow subscription with no subscription, MO appears in logs only.
  */
 export const maxDuration = 60;
 
+function productionReadiness() {
+  return {
+    infobipSms: isInfobipSmsConfigured(),
+    supabase: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()),
+    openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
+  };
+}
+
 export async function GET() {
+  const ready = productionReadiness();
+  const allReady = ready.infobipSms && ready.supabase && ready.openai;
   return NextResponse.json({
     ok: true,
     service: "geotravel-infobip-inbound-sms",
     hint: "Configure MO forward to this URL (POST, MO_JSON_2).",
+    ready: allReady,
+    config: ready,
+    ...(allReady
+      ? {}
+      : {
+          warning:
+            "Missing Vercel env vars — inbound may save but assistant SMS replies will not send.",
+        }),
   });
 }
 
 export async function POST(req: Request) {
+  const raw = await req.text();
   let payload: unknown;
   try {
-    payload = await req.json();
+    payload = raw ? JSON.parse(raw) : null;
   } catch {
-    console.warn("[infobip sms webhook] invalid_json");
+    console.warn("[infobip sms webhook] invalid_json", {
+      contentType: req.headers.get("content-type"),
+      excerpt: raw.slice(0, 200),
+    });
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
@@ -42,11 +63,12 @@ export async function POST(req: Request) {
       "[infobip sms webhook] no parseable inbound messages;",
       describeInfobipInboundPayload(payload),
     );
-    return NextResponse.json({ ok: true, processed: 0, parsed: 0 });
+    return NextResponse.json({ ok: true, processed: 0, parsed: 0, replies: 0 });
   }
 
   const runInbound = async () => {
     let processed = 0;
+    let replies = 0;
     for (const msg of messages) {
       try {
         const result = await processInboundMessaging({
@@ -62,28 +84,39 @@ export async function POST(req: Request) {
           });
         } else {
           processed += 1;
+          if (result.replied) replies += 1;
           console.info("[infobip sms webhook] processed inbound", {
             from: msg.fromE164,
             to: msg.toDigits,
+            replied: result.replied,
             excerpt: msg.body.slice(0, 80),
           });
+          if (!result.replied) {
+            console.warn(
+              "[infobip sms webhook] processed but no outbound SMS sent — check Vercel env (INFOBIP_*, OPENAI_API_KEY) or /admin/cases",
+              { from: msg.fromE164, config: productionReadiness() },
+            );
+          }
         }
       } catch (e) {
         console.error("[infobip sms webhook] processInboundMessaging failed:", e);
       }
     }
-    return processed;
+    return { processed, replies };
   };
 
   const awaitEnv = process.env.INFOBIP_WEBHOOK_AWAIT_PROCESSING?.trim().toLowerCase();
-  /** Default on: AI reply must finish before handler returns (same as WhatsApp). */
   const awaitProcessing = awaitEnv !== "false";
-  const processed = awaitProcessing ? await runInbound() : (after(runInbound), 0);
+  const stats = awaitProcessing
+    ? await runInbound()
+    : (after(runInbound), { processed: 0, replies: 0 });
 
   return NextResponse.json({
     ok: true,
-    processed,
+    processed: stats.processed,
+    replies: stats.replies,
     received: messages.length,
     awaited: awaitProcessing,
+    config: productionReadiness(),
   });
 }

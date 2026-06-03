@@ -59,8 +59,11 @@ export async function processInboundMessaging(input: {
   fromE164: string;
   body: string;
   providerMessageId?: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<
+  { ok: true; replied: boolean } | { ok: false; error: string }
+> {
   const sb = serviceSupabase();
+  let outboundSent = false;
   const resolved = await resolveInboundCaseAndContact(input.fromE164, sb);
   if (!resolved.ok) {
     console.warn(`[pipeline] inbound resolve failed: ${resolved.reason}`, {
@@ -181,7 +184,7 @@ export async function processInboundMessaging(input: {
     caseRow.caseStatus === "closed" ||
     (caseRow.orchestrationState === "cancelled" && !templateOnlyConversation)
   ) {
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   let langDet: Awaited<ReturnType<typeof detectLanguageFromText>>;
@@ -253,6 +256,7 @@ export async function processInboundMessaging(input: {
     outboundThisTurn = true;
     let out = text;
     if (
+      input.channel === "whatsapp" &&
       isTextMessagingChannel(input.channel) &&
       messagingAiConversationEnabled() &&
       !opts?.skipNaturalize
@@ -276,7 +280,22 @@ export async function processInboundMessaging(input: {
     if (input.channel === "sms") {
       out = clampSmsReply(out);
     }
-    await sendReply(caseRow, reservation, contact, out, input.channel);
+    const sent = await sendReply(
+      caseRow,
+      reservation,
+      contact,
+      out,
+      input.channel,
+      (ok) => {
+        if (ok) outboundSent = true;
+      },
+    );
+    if (!sent) {
+      console.warn("[pipeline] deliverOutbound: SMS/WhatsApp reply not sent", {
+        caseId: caseRow.id,
+        channel: input.channel,
+      });
+    }
   }
 
   if (caseRow.orchestrationState === "needs_human") {
@@ -305,7 +324,7 @@ export async function processInboundMessaging(input: {
       const reply = aiText ?? cannedNeedsHumanAck(convLang);
       await deliverOutbound(reply, { skipNaturalize: true });
     }
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   let state = caseRow.orchestrationState as OrchestrationState;
@@ -345,7 +364,7 @@ export async function processInboundMessaging(input: {
       );
     }
     await deliverOutbound(msg, { skipNaturalize: true });
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   if (state === "consent_future_comms") {
@@ -379,7 +398,7 @@ export async function processInboundMessaging(input: {
       convLang,
       deliverOutbound,
     );
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   if (state === "d1_confirm") {
@@ -414,7 +433,7 @@ export async function processInboundMessaging(input: {
         .eq("id", caseRow.id),
     );
     await deliverOutbound(scriptedConsentFutureComms(convLang));
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   if (state === "summarize_confirm") {
@@ -458,7 +477,7 @@ export async function processInboundMessaging(input: {
             skipNaturalize: true,
           });
         }
-        return { ok: true };
+        return { ok: true, replied: outboundSent };
       }
       assertTransition("crm_write_enrichment", "awaiting_d1");
       const pickup = reservation.pickupDatetime;
@@ -487,7 +506,7 @@ export async function processInboundMessaging(input: {
         payload: offer,
       });
       await deliverOutbound(scriptedEnrichmentCompleteAck(convLang));
-      return { ok: true };
+      return { ok: true, replied: outboundSent };
     }
     assertTransition(state, "collect_missing");
     assertNoError(
@@ -501,7 +520,7 @@ export async function processInboundMessaging(input: {
         .eq("id", caseRow.id),
     );
     await deliverOutbound(scriptedSummarizeCorrectionAsk(convLang));
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   if (state === "commercial_eligible") {
@@ -512,7 +531,7 @@ export async function processInboundMessaging(input: {
       convLang,
       deliverOutbound,
     );
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   if (
@@ -597,7 +616,7 @@ export async function processInboundMessaging(input: {
         }
       }
       await deliverOutbound(replyBody, { skipNaturalize: skipNat });
-      return { ok: true };
+      return { ok: true, replied: outboundSent };
     }
 
     assertTransition("collect_missing", "summarize_confirm");
@@ -614,7 +633,7 @@ export async function processInboundMessaging(input: {
         .eq("id", caseRow.id),
     );
     await deliverOutbound(summary);
-    return { ok: true };
+    return { ok: true, replied: outboundSent };
   }
 
   const freshStateRes = await sb
@@ -660,7 +679,7 @@ export async function processInboundMessaging(input: {
     await deliverOutbound(msg, { skipNaturalize: true });
   }
 
-  return { ok: true };
+  return { ok: true, replied: outboundSent };
 }
 
 async function sendCommercialIfEligible(
@@ -712,11 +731,13 @@ async function sendReply(
   contact: ContactRow,
   text: string,
   preferredChannel: "whatsapp" | "sms",
+  onSent?: (sent: boolean) => void,
 ) {
   const to = contact.phone ?? reservation.sourcePhone;
   if (!to) {
     console.warn("[pipeline] sendReply skipped — no phone on contact or reservation");
-    return;
+    onSent?.(false);
+    return false;
   }
   const toE164 = to.startsWith("+") ? to : `+${to.replace(/\D/g, "")}`;
   const send = await sendViaPreferredChannel({
@@ -746,7 +767,8 @@ async function sendReply(
     } catch {
       /* do not fail webhook on telemetry */
     }
-    return;
+    onSent?.(false);
+    return false;
   }
   const sb = serviceSupabase();
   assertNoError(
@@ -760,6 +782,8 @@ async function sendReply(
       status: "sent",
     }),
   );
+  onSent?.(true);
+  return true;
 }
 
 function formatSummary(data: CollectedDataJson, lang: SupportedLanguage): string {
