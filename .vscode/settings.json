@@ -1,0 +1,14 @@
+{
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.env.local": true
+  },
+  "git.ignoreLimitWarning": true,
+  "git.untrackedChanges": "hidden",
+  "git.repositoryScanMaxDepth": 1
+}
