@@ -6,6 +6,7 @@ import {
 } from "@/lib/ai/operational-extraction-heuristic";
 import { extractOperationalFields } from "@/lib/ai/pipeline";
 import type { ExtractionResult } from "@/lib/contracts/extraction";
+import type { UsageRecordContext } from "@/lib/usage/record-provider-usage";
 import {
   mergeCollectedData,
   normalizeLegacyCollectedData,
@@ -38,6 +39,7 @@ export async function applyInboundExtractionToCase(input: {
   reservationId: string;
   customerMessage: string;
   collectedData: CollectedDataJson | null | undefined;
+  usage?: UsageRecordContext;
 }): Promise<CollectedDataJson> {
   const prior = normalizeLegacyCollectedData(input.collectedData);
   const heuristic = extractOperationalFieldsHeuristic(input.customerMessage);
@@ -49,6 +51,7 @@ export async function applyInboundExtractionToCase(input: {
       llm = await extractOperationalFields({
         customerMessage: input.customerMessage,
         prior: prior as Record<string, unknown>,
+        usage: input.usage,
       });
     } catch (e) {
       console.warn("[applyInboundExtraction] extractOperationalFields failed:", e);
@@ -120,12 +123,14 @@ export async function applyInboundExtractionToCaseRow(
   caseRow: CaseRow,
   reservationId: string,
   customerMessage: string,
+  usage?: UsageRecordContext,
 ): Promise<CaseRow> {
   const merged = await applyInboundExtractionToCase({
     caseId: caseRow.id,
     reservationId,
     customerMessage,
     collectedData: caseRow.collectedData,
+    usage,
   });
   return { ...caseRow, collectedData: merged };
 }

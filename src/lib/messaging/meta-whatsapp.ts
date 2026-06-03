@@ -1,3 +1,4 @@
+import { recordMetaWhatsappUsage } from "@/lib/usage/record-provider-usage";
 import type { OutboundMessage, SendResult } from "./types";
 
 function graphBaseUrl(): string {
@@ -115,6 +116,17 @@ export async function sendWhatsAppMessage(
       const id = json.messages?.[0]?.id;
       if (!id) {
         return { ok: false, error: "whatsapp_no_message_id" };
+      }
+      if (msg.usageContext) {
+        void recordMetaWhatsappUsage({
+          context: {
+            operation: msg.usageContext.operation ?? "whatsapp_outbound",
+            caseId: msg.usageContext.caseId,
+            reservationId: msg.usageContext.reservationId,
+            channel: "whatsapp",
+          },
+          templateName: msg.templateName ?? null,
+        });
       }
       return { ok: true, providerMessageId: id, channel: "whatsapp" };
     }

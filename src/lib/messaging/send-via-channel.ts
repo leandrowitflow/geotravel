@@ -23,10 +23,16 @@ export async function sendViaPreferredChannel(input: {
   templateVariables?: Record<string, string>;
   linkPreview?: boolean;
 }): Promise<SendResult> {
+  const usageContext = {
+    caseId: input.caseId,
+    reservationId: input.reservationId,
+    operation: "outbound_send",
+  };
   const base: OutboundMessage = {
     toE164: input.toE164,
     body: input.body,
     channel: input.preferred,
+    usageContext,
     templateName: input.templateName,
     templateLanguageCode: input.templateLanguageCode,
     templateVariables: input.templateVariables,

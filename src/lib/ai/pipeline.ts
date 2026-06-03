@@ -1,4 +1,5 @@
-import { generateObject } from "ai";
+import { generateObjectTracked } from "@/lib/usage/generate-object-tracked";
+import type { UsageRecordContext } from "@/lib/usage/record-provider-usage";
 import { z } from "zod";
 import {
   hasOpenAiConfigured,
@@ -85,7 +86,7 @@ export type LanguageDetection = z.infer<typeof languageSchema>;
 
 export async function detectLanguageFromText(
   text: string,
-  opts?: { phoneSuggestsPortuguese?: boolean },
+  opts?: { phoneSuggestsPortuguese?: boolean; usage?: UsageRecordContext },
 ): Promise<LanguageDetection> {
   if (!hasOpenAiConfigured()) {
     return { language: opts?.phoneSuggestsPortuguese ? "pt" : "en", confidence: 0.3 };
@@ -93,7 +94,9 @@ export async function detectLanguageFromText(
   const phoneHint = opts?.phoneSuggestsPortuguese
     ? "The customer's phone number is Portuguese (+351). Short replies like Ok/Sim/4 often mean Portuguese."
     : "";
-  const { object } = await generateObject({
+  const { object } = await generateObjectTracked(
+    opts?.usage ?? { operation: "language_detect" },
+    {
     model: openAiChatModel(),
     schema: languageSchema,
     prompt: `Detect whether this customer message is primarily in English or Portuguese.
@@ -101,7 +104,8 @@ Return "pt" for Portuguese (Portugal or Brazil — treat both as pt).
 Return "en" for English or any other language (Spanish, French, German, etc.).
 ${phoneHint}
 Text:\n"""${text.slice(0, 2000)}"""`,
-  });
+    },
+  );
   return object;
 }
 
@@ -140,18 +144,22 @@ function assignExtractionConfidence(fields: ExtractionFields): ExtractionResult 
 export async function extractOperationalFields(input: {
   customerMessage: string;
   prior: Partial<ExtractionResult> | null;
+  usage?: UsageRecordContext;
 }): Promise<ExtractionResult> {
   if (!hasOpenAiConfigured()) {
     return { confidence: {} };
   }
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: extractionFieldsSchema,
-    prompt: buildOperationalExtractionPrompt(
-      input.customerMessage,
-      input.prior,
-    ),
-  });
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "extract_fields" },
+    {
+      model: openAiChatModel(),
+      schema: extractionFieldsSchema,
+      prompt: buildOperationalExtractionPrompt(
+        input.customerMessage,
+        input.prior,
+      ),
+    },
+  );
   return assignExtractionConfidence(object);
 }
 
@@ -165,15 +173,18 @@ export async function generateInboundAssistantReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
   channel?: MessagingChannel;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
   }
   const locale = toAssistantLocale(input.language);
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: assistantAckSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "needs_human_ack" },
+    {
+      model: openAiChatModel(),
+      schema: assistantAckSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 This booking is with a human agent for review, but the customer just sent a message on ${replyChannelLabel(input.channel)}.
 
@@ -193,7 +204,8 @@ Pickup / trip context: ${input.pickupSummary ?? "unknown"}
 
 Customer message:
 """${input.userMessage.slice(0, 3500)}"""`,
-  });
+    },
+  );
   return object.reply.trim() || null;
 }
 
@@ -211,15 +223,18 @@ export async function naturalizeWhatsappReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
   channel?: MessagingChannel;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
   }
   const locale = toAssistantLocale(input.language);
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: naturalizeSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "naturalize_reply" },
+    {
+      model: openAiChatModel(),
+      schema: naturalizeSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 Rewrite the "scripted intent" as a single professional ${replyChannelLabel(input.channel)} message in ${assistantLocaleLabel(locale)}.
 Rules:
@@ -241,7 +256,8 @@ Customer just said:
 
 Scripted intent to preserve:
 """${input.scriptedIntent.slice(0, 2000)}"""`,
-  });
+    },
+  );
   return object.message.trim() || null;
 }
 
@@ -265,6 +281,7 @@ export async function generateWhatsappEnrichmentAsk(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
   channel?: MessagingChannel;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -274,10 +291,12 @@ export async function generateWhatsappEnrichmentAsk(input: {
     (FIELD_ORDER as readonly string[]).includes(input.fieldKey)
       ? fieldIntentForAi(input.fieldKey as FieldKey)
       : fieldIntentForAi("additional_notes");
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: enrichmentAskSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "enrichment_ask" },
+    {
+      model: openAiChatModel(),
+      schema: enrichmentAskSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 You are continuing a private transfer booking conversation on ${replyChannelLabel(input.channel)}.
 
@@ -298,7 +317,8 @@ ${input.transcript || "(no prior messages)"}
 
 Customer just said:
 """${input.userMessage.slice(0, 2000)}"""`,
-  });
+    },
+  );
   return object.message.trim() || null;
 }
 
@@ -322,6 +342,7 @@ export async function generateOrchestrationTurnReply(input: {
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
   channel?: MessagingChannel;
   summaryText?: string;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -341,10 +362,12 @@ export async function generateOrchestrationTurnReply(input: {
     present_summary:
       "Present the collected trip details from the summary below in natural prose (not a bullet questionnaire). Ask them to confirm everything is correct or tell us what to fix. Accept yes/no/sim/não style answers.",
   };
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: catchAllSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: `orchestration_${input.kind}` },
+    {
+      model: openAiChatModel(),
+      schema: catchAllSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 Workflow step (internal): ${input.kind}
 Goal: ${intentByKind[input.kind]}
@@ -364,7 +387,8 @@ Customer just said:
 
 Write ONE natural reply in ${assistantLocaleLabel(locale)}:
 ${lengthHint(input.channel)}`,
-  });
+    },
+  );
   return object.reply.trim() || null;
 }
 
@@ -395,15 +419,18 @@ export async function generateWhatsappTemplateAwareReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext: WhatsappTemplateConversationContext;
   channel?: MessagingChannel;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
   }
   const locale = toAssistantLocale(input.language);
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: catchAllSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "template_aware_reply" },
+    {
+      model: openAiChatModel(),
+      schema: catchAllSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 The customer is replying on ${replyChannelLabel(input.channel)} after we sent them a specific template message.
 
@@ -424,7 +451,8 @@ ${lengthHint(input.channel)}
 - Directly address what they said with empathy and professionalism.
 - Strictly follow template-aware rules — they override generic transfer-assistant habits.
 - Do not invent refunds, amounts, or policies.`,
-  });
+    },
+  );
   return object.reply.trim() || null;
 }
 
@@ -438,15 +466,18 @@ export async function generateWhatsappCatchAllReply(input: {
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
   channel?: MessagingChannel;
+  usage?: UsageRecordContext;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
   }
   const locale = toAssistantLocale(input.language);
-  const { object } = await generateObject({
-    model: openAiChatModel(),
-    schema: catchAllSchema,
-    prompt: `${assistantSystemPreamble(locale)}
+  const { object } = await generateObjectTracked(
+    input.usage ?? { operation: "catch_all_reply" },
+    {
+      model: openAiChatModel(),
+      schema: catchAllSchema,
+      prompt: `${assistantSystemPreamble(locale)}
 
 You are helping a passenger with their airport transfer on ${replyChannelLabel(input.channel)}.
 Internal workflow state (do not mention literally): ${input.orchestrationState}
@@ -468,7 +499,8 @@ ${lengthHint(input.channel)}
 - Answer what you safely can from context (pickup/destination/ref) unless template rules say otherwise.
 - If passenger name is on file, you may greet with first name once politely; otherwise do not invent a name.
 - If you cannot answer (policy, changes, billing), say our team will confirm shortly — do not invent facts.`,
-  });
+    },
+  );
   return object.reply.trim() || null;
 }
 
