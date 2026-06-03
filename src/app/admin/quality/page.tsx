@@ -39,15 +39,13 @@ function ChannelMixChart({
   mix: {
     whatsappOnly: number;
     smsOnly: number;
-    both: number;
-    otherOutbound: number;
   };
 }) {
   if (total === 0) {
     return (
       <p className="text-sm text-stone-500 dark:text-stone-400">
-        No outbound messages yet — this chart will show how contacted clients split across channels once you
-        have data.
+        No outbound messages yet — this chart will show how contacted clients split across WhatsApp and SMS
+        once you have data.
       </p>
     );
   }
@@ -56,7 +54,7 @@ function ChannelMixChart({
   const segments = [
     {
       key: "wa",
-      label: "WhatsApp only",
+      label: "WhatsApp",
       count: mix.whatsappOnly,
       widthPct: pct(mix.whatsappOnly),
       barClass: "bg-emerald-600 dark:bg-emerald-500",
@@ -64,27 +62,11 @@ function ChannelMixChart({
     },
     {
       key: "sms",
-      label: "SMS only",
+      label: "SMS",
       count: mix.smsOnly,
       widthPct: pct(mix.smsOnly),
       barClass: "bg-sky-600 dark:bg-sky-500",
       dotClass: "bg-sky-600",
-    },
-    {
-      key: "both",
-      label: "WhatsApp + SMS",
-      count: mix.both,
-      widthPct: pct(mix.both),
-      barClass: "bg-violet-600 dark:bg-violet-500",
-      dotClass: "bg-violet-600",
-    },
-    {
-      key: "other",
-      label: "Other channel only",
-      count: mix.otherOutbound,
-      widthPct: pct(mix.otherOutbound),
-      barClass: "bg-stone-400 dark:bg-stone-500",
-      dotClass: "bg-stone-400",
     },
   ].filter((s) => s.count > 0);
 
@@ -108,27 +90,15 @@ function ChannelMixChart({
         {[
           {
             key: "wa",
-            label: "WhatsApp only",
+            label: "WhatsApp",
             count: mix.whatsappOnly,
             dotClass: "bg-emerald-600",
           },
           {
             key: "sms",
-            label: "SMS only",
+            label: "SMS",
             count: mix.smsOnly,
             dotClass: "bg-sky-600",
-          },
-          {
-            key: "both",
-            label: "WhatsApp + SMS",
-            count: mix.both,
-            dotClass: "bg-violet-600",
-          },
-          {
-            key: "other",
-            label: "Other channel only",
-            count: mix.otherOutbound,
-            dotClass: "bg-stone-400",
           },
         ].map((row) => (
           <li key={row.key} className="flex items-center gap-2 text-stone-700 dark:text-stone-300">
@@ -197,21 +167,14 @@ export default async function QualityPage() {
 
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-900 dark:shadow-none">
         <h2 className="text-base font-semibold text-stone-900 dark:text-stone-50">
-          Contacted clients by channel mix
+          Contacted clients by channel
         </h2>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          Every contacted client is in exactly one bucket; the bar always represents 100% of contacted clients.
+          Each client is on one channel only (WhatsApp or SMS), based on the case&apos;s current channel.
         </p>
         <div className="mt-6">
           <ChannelMixChart total={s.clientsContacted} mix={s.channelClientMix} />
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
-          <strong className="font-medium text-stone-600 dark:text-stone-400">WhatsApp only</strong> — at least
-          one outbound on WhatsApp, none on SMS. <strong className="font-medium text-stone-600 dark:text-stone-400">SMS only</strong> — the reverse.{" "}
-          <strong className="font-medium text-stone-600 dark:text-stone-400">WhatsApp + SMS</strong> — at least
-          one of each. <strong className="font-medium text-stone-600 dark:text-stone-400">Other channel only</strong>{" "}
-          — outbound exists but not tagged as WhatsApp or SMS (unusual).
-        </p>
       </section>    </div>
   );
 }

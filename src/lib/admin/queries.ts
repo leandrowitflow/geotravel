@@ -225,9 +225,6 @@ export async function getQualityStats() {
   let messagesViaSms = 0;
   const contactedCases = new Set<string>();
   const repliedCases = new Set<string>();
-  const casesWithWaOutbound = new Set<string>();
-  const casesWithSmsOutbound = new Set<string>();
-
   for (const row of msgData ?? []) {
     const r = row as { channel: string; direction: string; case_id: string };
     const ch = String(r.channel).toLowerCase();
@@ -241,23 +238,32 @@ export async function getQualityStats() {
     contactedCases.add(r.case_id);
     if (ch === "whatsapp") {
       messagesViaWhatsapp++;
-      casesWithWaOutbound.add(r.case_id);
     } else if (ch === "sms") {
       messagesViaSms++;
-      casesWithSmsOutbound.add(r.case_id);
     }
   }
 
   const clientsContacted = contactedCases.size;
 
-  let clientsBothChannels = 0;
-  for (const id of casesWithWaOutbound) {
-    if (casesWithSmsOutbound.has(id)) clientsBothChannels++;
+  let clientsWhatsappOnly = 0;
+  let clientsSmsOnly = 0;
+  if (contactedCases.size > 0) {
+    const { data: caseChannels, error: caseErr } = await sb
+      .from("cases")
+      .select("id, current_channel")
+      .in("id", [...contactedCases]);
+    if (caseErr) throw new Error(`cases: ${caseErr.message}`);
+    for (const row of caseChannels ?? []) {
+      const ch = String(
+        (row as { current_channel: string }).current_channel ?? "whatsapp",
+      ).toLowerCase();
+      if (ch === "sms") {
+        clientsSmsOnly++;
+      } else {
+        clientsWhatsappOnly++;
+      }
+    }
   }
-  const clientsWhatsappOnly = casesWithWaOutbound.size - clientsBothChannels;
-  const clientsSmsOnly = casesWithSmsOutbound.size - clientsBothChannels;
-  const clientsWaOrSms = clientsWhatsappOnly + clientsSmsOnly + clientsBothChannels;
-  const clientsOtherOutbound = Math.max(0, clientsContacted - clientsWaOrSms);
 
   return {
     outboundMessages,
@@ -265,12 +271,10 @@ export async function getQualityStats() {
     messagesViaSms,
     clientsContacted,
     clientsReplied: repliedCases.size,
-    /** Disjoint partition of contacted clients (sums to clientsContacted). */
+    /** One channel per client (cases.current_channel). */
     channelClientMix: {
       whatsappOnly: clientsWhatsappOnly,
       smsOnly: clientsSmsOnly,
-      both: clientsBothChannels,
-      otherOutbound: clientsOtherOutbound,
     },
   };
 }

@@ -1,4 +1,5 @@
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
+import { isSatisfactionDue } from "@/lib/geotravel/satisfaction-timing";
 import { resolveWhatsappTemplateLanguage } from "@/lib/geotravel/resolve-whatsapp-template-language";
 import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 
@@ -89,10 +90,14 @@ export type SelectedBookingWhatsappTemplate = {
 };
 
 /**
- * Pick Meta template for manual admin “WhatsApp” sends (pilot numbers only).
+ * Pick Meta template for manual sends and “current window” labelling.
  *
+ * Automated sends use nextLifecyclePhaseToSend() for the full sequence
+ * (welcome_1 | welcome_2 → data → satisfaction; canceled anytime).
+ *
+ * Window mapping:
  * - canceled — booking cancelled
- * - satisfaction — pickup time has passed
+ * - satisfaction — due (dropoff + delay, or one month after pickup when no dropoff)
  * - data — within 48h of pickup (still in the future)
  * - welcome_2 — between 48h and 72h until pickup
  * - welcome_1 — more than 72h until pickup (or unknown pickup time)
@@ -118,14 +123,17 @@ export function selectBookingWhatsappTemplate(
     };
   }
 
-  if (hours !== null && hours < 0) {
+  if (isSatisfactionDue(booking, nowMs)) {
     const phase = "satisfaction";
+    const reason = booking.dropoff_date_time?.trim()
+      ? "Dropoff time has passed"
+      : "One month after pickup (no dropoff time on booking)";
     return {
       phase,
       metaTemplateName: resolveMetaTemplateName(phase),
       language: resolveWhatsappTemplateLanguage(phase, langCtx),
       hoursUntilPickup: hours,
-      reason: "Pickup time has passed",
+      reason,
     };
   }
 

@@ -77,11 +77,25 @@ describe("selectBookingWhatsappTemplate", () => {
     expect(selectBookingWhatsappTemplate(b, now).phase).toBe("canceled");
   });
 
-  it("uses satisfaction phase after pickup", () => {
+  it("uses satisfaction phase after dropoff", () => {
     const b = booking({
-      pickup_date_time: "2026-05-18T12:00:00.000Z",
+      pickup_date_time: "2026-05-18T10:00:00.000Z",
+      dropoff_date_time: "2026-05-18T12:00:00.000Z",
     });
     expect(selectBookingWhatsappTemplate(b, now).phase).toBe("satisfaction");
+  });
+
+  it("uses satisfaction one month after pickup when no dropoff", () => {
+    const b = booking({ pickup_date_time: "2026-04-19T12:00:00.000Z" });
+    expect(selectBookingWhatsappTemplate(b, now).phase).toBe("satisfaction");
+  });
+
+  it("does not use satisfaction between pickup and dropoff", () => {
+    const b = booking({
+      pickup_date_time: "2026-05-19T10:00:00.000Z",
+      dropoff_date_time: "2026-05-19T14:00:00.000Z",
+    });
+    expect(selectBookingWhatsappTemplate(b, now).phase).not.toBe("satisfaction");
   });
 });
 

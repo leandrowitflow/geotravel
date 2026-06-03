@@ -6,22 +6,19 @@ import {
   lifecycleWhatsappAutomationEnabled,
   LIFECYCLE_INNGEST_PILOT_PHONE_DIGITS,
 } from "@/lib/geotravel/lifecycle-inngest-pilot";
-import { bookingCaseAlreadyHadWhatsappSend } from "@/lib/geotravel/lifecycle-whatsapp-sent-phases";
+import { getSentLifecyclePhasesForBooking } from "@/lib/geotravel/lifecycle-whatsapp-sent-phases";
+import { nextLifecyclePhaseToSend } from "@/lib/geotravel/lifecycle-automation-schedule";
 import {
-  hoursUntilPickup,
   selectBookingWhatsappTemplate,
   type GeotravelWhatsappLifecycleTemplate,
 } from "@/lib/geotravel/select-booking-whatsapp-template";
 
+export { nextLifecyclePhaseToSend, satisfactionDelayHours } from "@/lib/geotravel/lifecycle-automation-schedule";
+/** @deprecated Use nextLifecyclePhaseToSend */
+export { lifecyclePhaseForFirstAutomatedSend } from "@/lib/geotravel/lifecycle-automation-schedule";
+
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 50;
-
-/** Hours after pickup before sending satisfaction (client has left). */
-function satisfactionDelayHours(): number {
-  const raw = process.env.GEOTRAVEL_WHATSAPP_SATISFACTION_DELAY_HOURS?.trim();
-  const n = raw ? Number(raw) : 2;
-  return Number.isFinite(n) && n >= 0 ? n : 2;
-}
 
 export type LifecycleWhatsappSendAttempt = {
   bookingId: number;
@@ -41,37 +38,6 @@ export type RunLifecycleWhatsappAutomationResult =
       attempts: LifecycleWhatsappSendAttempt[];
     }
   | { ok: false; error: string };
-
-/**
- * Phase to send on the case's first (and only) automated lifecycle message.
- */
-export function lifecyclePhaseForFirstAutomatedSend(
-  booking: GeotravelBooking,
-  nowMs: number = Date.now(),
-): GeotravelWhatsappLifecycleTemplate | null {
-  const selection = selectBookingWhatsappTemplate(booking, nowMs);
-  const phase = selection.phase;
-
-  const hours = hoursUntilPickup(booking, nowMs);
-  if (phase === "satisfaction") {
-    const delay = satisfactionDelayHours();
-    if (hours === null || hours > -delay) {
-      return null;
-    }
-  }
-
-  if (
-    (phase === "welcome_1" ||
-      phase === "welcome_2" ||
-      phase === "data") &&
-    hours !== null &&
-    hours <= 0
-  ) {
-    return null;
-  }
-
-  return phase;
-}
 
 async function fetchAllPilotBookings(): Promise<
   { ok: true; bookings: GeotravelBooking[] } | { ok: false; error: string }
@@ -97,7 +63,8 @@ async function fetchAllPilotBookings(): Promise<
 }
 
 /**
- * Inngest cron: send lifecycle WhatsApp templates for pilot phone 966915976 only.
+ * Inngest cron: send lifecycle templates for pilot phone only.
+ * Multiple templates per case over time (welcome → data → satisfaction, or canceled).
  */
 export async function runLifecycleWhatsappAutomation(): Promise<RunLifecycleWhatsappAutomationResult> {
   if (!lifecycleWhatsappAutomationEnabled()) {
@@ -116,28 +83,17 @@ export async function runLifecycleWhatsappAutomation(): Promise<RunLifecycleWhat
 
   for (const booking of pilotBookings) {
     const ref = booking.booking_reference?.trim() ?? null;
-    const currentPhase = selectBookingWhatsappTemplate(booking, nowMs).phase;
+    const windowPhase = selectBookingWhatsappTemplate(booking, nowMs).phase;
+    const sentPhases = await getSentLifecyclePhasesForBooking(booking);
+    const phase = nextLifecyclePhaseToSend(booking, sentPhases, nowMs);
 
-    const already = await bookingCaseAlreadyHadWhatsappSend(booking);
-    if (already.skip) {
-      attempts.push({
-        bookingId: booking.id,
-        bookingRef: ref,
-        phase: currentPhase,
-        ok: true,
-        skipped: already.reason ?? "case_already_sent",
-      });
-      continue;
-    }
-
-    const phase = lifecyclePhaseForFirstAutomatedSend(booking, nowMs);
     if (!phase) {
       attempts.push({
         bookingId: booking.id,
         bookingRef: ref,
-        phase: currentPhase,
+        phase: windowPhase,
         ok: true,
-        skipped: "not_due_yet",
+        skipped: "not_due_or_already_sent",
       });
       continue;
     }
