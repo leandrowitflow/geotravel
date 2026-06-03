@@ -142,3 +142,17 @@ export type CrmSyncAttemptRow = {
   errorMessage: string | null;
   createdAt: Date;
 };
+
+export type ProviderUsageEventRow = {
+  id: string;
+  provider: "openai" | "meta" | "infobip" | string;
+  operation: string;
+  caseId: string | null;
+  reservationId: string | null;
+  channel: string | null;
+  quantity: number;
+  unit: string;
+  estimatedCostUsd: number;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+};

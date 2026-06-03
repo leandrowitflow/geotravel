@@ -19,6 +19,7 @@ import {
 } from "@/lib/ai/pipeline";
 import { assistantFallbackFromPhone } from "@/lib/ai/assistant-locale";
 import { hasOpenAiConfigured } from "@/lib/ai/openai-client";
+import type { UsageRecordContext } from "@/lib/usage/record-provider-usage";
 import { isPortugueseRecipientPhone } from "@/lib/phone/is-portuguese-phone";
 import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import { applyInboundExtractionToCaseRow } from "@/lib/orchestration/apply-inbound-extraction";
@@ -168,10 +169,20 @@ export async function processInboundMessaging(input: {
     }
   }
 
+  function aiUsage(operation: string): UsageRecordContext {
+    return {
+      operation,
+      caseId: caseRow.id,
+      reservationId: reservation.id,
+      channel: input.channel,
+    };
+  }
+
   caseRow = await applyInboundExtractionToCaseRow(
     caseRow,
     reservation.id,
     input.body,
+    aiUsage("extract_fields"),
   );
 
   if (
@@ -189,6 +200,7 @@ export async function processInboundMessaging(input: {
   try {
     langDet = await detectLanguageFromText(input.body, {
       phoneSuggestsPortuguese,
+      usage: aiUsage("language_detect"),
     });
   } catch (e) {
     console.warn("[pipeline] detectLanguageFromText failed, falling back:", e);
@@ -275,6 +287,7 @@ export async function processInboundMessaging(input: {
         whatsappTemplateContext: messagingTemplateContext,
         channel: input.channel,
         summaryText: extra?.summaryText,
+        usage: aiUsage(`orchestration_${kind}`),
       });
       if (text) return text;
     } catch (e) {
@@ -297,6 +310,7 @@ export async function processInboundMessaging(input: {
         passengerName: reservation.customerName,
         whatsappTemplateContext: messagingTemplateContext,
         channel: input.channel,
+        usage: aiUsage("enrichment_ask"),
       });
       if (text) return text;
     } catch (e) {
@@ -319,6 +333,7 @@ export async function processInboundMessaging(input: {
         passengerName: reservation.customerName,
         whatsappTemplateContext: messagingTemplateContext,
         channel: input.channel,
+        usage: aiUsage("template_aware_reply"),
       });
       if (text) return text;
     } catch (e) {
@@ -342,6 +357,7 @@ export async function processInboundMessaging(input: {
         passengerName: reservation.customerName,
         whatsappTemplateContext: messagingTemplateContext,
         channel: input.channel,
+        usage: aiUsage("catch_all_reply"),
       });
       if (text) return text;
     } catch (e) {
@@ -393,6 +409,7 @@ export async function processInboundMessaging(input: {
           passengerName: reservation.customerName,
           whatsappTemplateContext: messagingTemplateContext,
           channel: input.channel,
+          usage: aiUsage("needs_human_ack"),
         });
       } catch (e) {
         console.warn("[processInboundMessaging] generateInboundAssistantReply failed:", e);

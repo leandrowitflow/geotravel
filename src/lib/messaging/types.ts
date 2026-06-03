@@ -1,9 +1,17 @@
 export type MessagingChannel = "whatsapp" | "sms";
 
+export type OutboundUsageContext = {
+  caseId: string;
+  reservationId: string;
+  /** e.g. lifecycle_send, inbound_reply */
+  operation?: string;
+};
+
 export type OutboundMessage = {
   toE164: string;
   body: string;
   channel: MessagingChannel;
+  usageContext?: OutboundUsageContext;
   templateName?: string;
   /** e.g. en_US — defaults from WHATSAPP_DEFAULT_TEMPLATE_LANGUAGE */
   templateLanguageCode?: string;

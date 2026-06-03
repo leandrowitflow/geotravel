@@ -1,5 +1,6 @@
 import { infobipSmsSender } from "./infobip-config";
 import { isPublicHttpsWebhookUrl } from "./infobip-inbound-webhook-url";
+import { recordInfobipSmsUsage } from "@/lib/usage/record-provider-usage";
 import type { OutboundMessage, SendResult } from "./types";
 
 /** Single-line SMS avoids multipart/newline issues on some PT routes. */
@@ -114,6 +115,22 @@ export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> 
     const status =
       st?.description?.trim() || st?.name?.trim() || undefined;
 
+    const smsCount = (first as { details?: { messageCount?: number } }).details
+      ?.messageCount;
+
+    if (msg.usageContext) {
+      void recordInfobipSmsUsage({
+        context: {
+          operation: msg.usageContext.operation ?? "sms_outbound",
+          caseId: msg.usageContext.caseId,
+          reservationId: msg.usageContext.reservationId,
+          channel: "sms",
+        },
+        body: formatSmsOutboundText(msg.body),
+        apiMessageCount: smsCount,
+      });
+    }
+
     return {
       ok: true,
       providerMessageId: messageId,
@@ -123,8 +140,7 @@ export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> 
         status,
         statusGroup: st?.groupName?.trim(),
         statusName: st?.name?.trim(),
-        smsCount: (first as { details?: { messageCount?: number } }).details
-          ?.messageCount,
+        smsCount,
       },
     };
   } catch (e) {

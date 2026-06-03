@@ -1,4 +1,6 @@
+import { QualityConsumptionPanel } from "@/components/admin/quality-consumption-panel";
 import { RefreshDataButton } from "@/components/admin/refresh-data-button";
+import { getConsumptionStats } from "@/lib/admin/consumption-queries";
 import { getQualityStats } from "@/lib/admin/queries";
 
 function Stat({
@@ -146,7 +148,10 @@ function ChannelMixChart({
   );
 }
 export default async function QualityPage() {
-  const s = await getQualityStats();
+  const [s, consumption] = await Promise.all([
+    getQualityStats(),
+    getConsumptionStats(),
+  ]);
   const denom = Math.max(s.clientsContacted, 1);
   const replyRate = Math.round((s.clientsReplied / denom) * 100);
 
@@ -156,11 +161,13 @@ export default async function QualityPage() {
         <div>
           <h1 className="text-2xl font-semibold text-stone-900 dark:text-stone-50">Quality</h1>
           <p className="text-sm text-stone-600 dark:text-stone-400">
-            Outbound volume, channel mix, and how many clients reply.
+            Messaging funnel, channel mix, replies, and provider consumption (OpenAI, Meta, SMS).
           </p>
         </div>
         <RefreshDataButton />
       </div>
+
+      <QualityConsumptionPanel stats={consumption} />
 
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
