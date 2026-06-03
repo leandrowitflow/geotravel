@@ -39,4 +39,24 @@ describe("parseInfobipInboundSmsPayload", () => {
     });
     expect(msgs[0]?.body).toBe("Oi");
   });
+
+  it("canonicalizes PT national sender without country code", () => {
+    const msgs = parseInfobipInboundSmsPayload({
+      results: [{ from: "966915976", text: "Olá", messageId: "2" }],
+    });
+    expect(msgs[0]?.fromE164).toBe("+351966915976");
+  });
+
+  it("parses content.text from Messages API shape", () => {
+    const msgs = parseInfobipInboundSmsPayload({
+      results: [
+        {
+          from: "351966915976",
+          content: { text: "Somos 4" },
+          messageId: "3",
+        },
+      ],
+    });
+    expect(msgs[0]?.body).toBe("Somos 4");
+  });
 });

@@ -297,11 +297,26 @@ export async function executeGeotravelWelcomeSend(
   }
 
   const messageBodyForStore =
-    send.ok && (useWaTemplate || useSmsLifecycle)
-      ? welcomeBody
-      : longBodyText;
+    send.ok && useSmsLifecycle && smsLifecycleBody
+      ? smsLifecycleBody
+      : send.ok && useWaTemplate
+        ? welcomeBody
+        : longBodyText;
 
   const sb = serviceSupabase();
+
+  if (send.ok && send.channel === "sms") {
+    assertNoError(
+      "case channel sms on lifecycle send",
+      await sb
+        .from("cases")
+        .update({
+          current_channel: "sms",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", ctx.caseId),
+    );
+  }
 
   const customerDisplayBody =
     useSmsLifecycle && smsLifecycleBody
