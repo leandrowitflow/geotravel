@@ -50,6 +50,7 @@ const bookingSchema = z
 const bodySchema = z.object({
   booking: bookingSchema,
   templateOverride: z.enum(GEOTRAVEL_WHATSAPP_LIFECYCLE_TEMPLATES).optional(),
+  channel: z.enum(["whatsapp", "sms"]).optional(),
 });
 
 export async function POST(req: Request) {
@@ -80,6 +81,7 @@ export async function POST(req: Request) {
   const result = await executeGeotravelWelcomeSend(booking, {
     templateOverride: parsed.data.templateOverride,
     useLifecycleTemplates: true,
+    channelOverride: parsed.data.channel,
   });
   if (!result.ok) {
     return NextResponse.json(result.body, { status: result.status });

@@ -17,6 +17,8 @@ import type { CollectedDataJson } from "@/db/schema";
 import { mergeCollectedData } from "@/lib/orchestration/collected-data-merge";
 import { firstNameFromDisplayName } from "@/lib/passenger/first-name";
 import type { WhatsappTemplateConversationContext } from "@/lib/geotravel/whatsapp-template-ai-context";
+import type { MessagingChannel } from "@/lib/messaging/types";
+import { SMS_LIFECYCLE_MAX_CHARS } from "@/lib/geotravel/build-lifecycle-sms-body";
 import {
   assistantLocaleLabel,
   assistantSystemPreamble,
@@ -34,11 +36,23 @@ function passengerContextLine(passengerName: string | null | undefined): string 
   return `Passenger name: ${full}${first && first !== full ? ` (first name for greeting: ${first})` : ""}`;
 }
 
+function replyChannelLabel(channel?: MessagingChannel): string {
+  return channel === "sms" ? "SMS" : "WhatsApp";
+}
+
+function lengthHint(channel?: MessagingChannel): string {
+  return channel === "sms"
+    ? `Keep the reply within ~${SMS_LIFECYCLE_MAX_CHARS} characters (single SMS or two parts max).`
+    : "Keep the reply concise for WhatsApp.";
+}
+
 function templateContextBlock(
   ctx: WhatsappTemplateConversationContext | null | undefined,
+  channel?: MessagingChannel,
 ): string {
-  if (!ctx) return "Last outbound: unknown (no template context on file).";
-  return `Last WhatsApp template phase: ${ctx.phase}
+  const via = replyChannelLabel(channel);
+  if (!ctx) return `Last outbound ${via}: unknown (no template context on file).`;
+  return `Last outbound ${via} template phase: ${ctx.phase}
 Template-aware reply rules (must follow):
 ${ctx.aiInstructions}`;
 }
@@ -142,6 +156,7 @@ export async function generateInboundAssistantReply(input: {
   /** Full name from reservation / API when available */
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
+  channel?: MessagingChannel;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -152,16 +167,17 @@ export async function generateInboundAssistantReply(input: {
     schema: assistantAckSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-This booking is with a human agent for review, but the customer just sent a message.
+This booking is with a human agent for review, but the customer just sent a message on ${replyChannelLabel(input.channel)}.
 
-Write ONE short reply (max ~400 characters) in ${assistantLocaleLabel(locale)}:
+Write ONE short reply in ${assistantLocaleLabel(locale)}:
+${lengthHint(input.channel)}
 - Thank them and acknowledge what they said at a high level.
 - If a passenger name is on file, you may use the first name once in a polite greeting; if unknown, do not invent a name.
 - If you can safely answer from the context (pickup time/location, booking ref), do so briefly — unless template rules say not to discuss the trip.
 - Otherwise say our team will respond shortly. Do not promise refunds, cancellations, or price changes.
 - Do not ask for payment or personal documents.
 
-${templateContextBlock(input.whatsappTemplateContext)}
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
 Booking ref: ${input.bookingRef ?? "unknown"}
@@ -186,6 +202,7 @@ export async function naturalizeWhatsappReply(input: {
   reservationSummary: string;
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
+  channel?: MessagingChannel;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -196,14 +213,14 @@ export async function naturalizeWhatsappReply(input: {
     schema: naturalizeSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-Rewrite the "scripted intent" as a single professional WhatsApp message in ${assistantLocaleLabel(locale)}.
+Rewrite the "scripted intent" as a single professional ${replyChannelLabel(input.channel)} message in ${assistantLocaleLabel(locale)}.
 Rules:
 - Keep the same purpose (questions asked, facts stated, yes/no prompts) unless template rules forbid that topic.
 - Do not invent pickup times, prices, policies, or new commitments.
-- Short paragraphs, max ~600 characters if possible.
+- ${lengthHint(input.channel)}
 - If passenger name is on file, you may use the first name once politely; if not on file, do not invent.
 
-${templateContextBlock(input.whatsappTemplateContext)}
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
 Reservation context: ${input.reservationSummary}
@@ -220,7 +237,7 @@ Scripted intent to preserve:
   return object.message.trim() || null;
 }
 
-/** One natural WhatsApp bubble asking for the next enrichment field (replaces dry scripted prompt). */
+/** One natural message asking for the next enrichment field (replaces dry scripted prompt). */
 export async function generateWhatsappEnrichmentAsk(input: {
   fieldKey: string;
   scriptedQuestion: string;
@@ -230,6 +247,7 @@ export async function generateWhatsappEnrichmentAsk(input: {
   reservationSummary: string;
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
+  channel?: MessagingChannel;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -240,16 +258,17 @@ export async function generateWhatsappEnrichmentAsk(input: {
     schema: enrichmentAskSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-You are helping finalise a private transfer booking.
+You are helping finalise a private transfer booking on ${replyChannelLabel(input.channel)}.
 
-Write ONE short message in ${assistantLocaleLabel(locale)} (max ~650 characters):
+Write ONE short message in ${assistantLocaleLabel(locale)}:
+${lengthHint(input.channel)}
 - No bullet lists unless truly needed.
 - Ask for EXACTLY the same information as the scripted question — same topic, same intent.
 - Do not invent pickup times, prices, or policies. Do not promise refunds or cancellations.
 - If passenger name is on file, you may use the first name once; if not on file, do not invent.
 - Follow template-aware rules below — they override generic "confirm your trip" tone when they conflict.
 
-${templateContextBlock(input.whatsappTemplateContext)}
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
 Field key (internal): ${input.fieldKey}
@@ -295,6 +314,7 @@ export async function generateWhatsappTemplateAwareReply(input: {
   bookingRef: string | null;
   passengerName?: string | null;
   whatsappTemplateContext: WhatsappTemplateConversationContext;
+  channel?: MessagingChannel;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -305,9 +325,9 @@ export async function generateWhatsappTemplateAwareReply(input: {
     schema: catchAllSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-The customer is replying after we sent them a specific Meta template message.
+The customer is replying on ${replyChannelLabel(input.channel)} after we sent them a specific template message.
 
-${templateContextBlock(input.whatsappTemplateContext)}
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
 Booking ref (use only if appropriate for this template): ${input.bookingRef ?? "unknown"}
@@ -319,7 +339,8 @@ ${input.transcript || "(empty)"}
 Customer message:
 """${input.userMessage.slice(0, 3500)}"""
 
-Write ONE reply in ${assistantLocaleLabel(locale)} (max ~650 characters):
+Write ONE reply in ${assistantLocaleLabel(locale)}:
+${lengthHint(input.channel)}
 - Directly address what they said with empathy and professionalism.
 - Strictly follow template-aware rules — they override generic transfer-assistant habits.
 - Do not invent refunds, amounts, or policies.`,
@@ -336,6 +357,7 @@ export async function generateWhatsappCatchAllReply(input: {
   bookingRef: string | null;
   passengerName?: string | null;
   whatsappTemplateContext?: WhatsappTemplateConversationContext | null;
+  channel?: MessagingChannel;
 }): Promise<string | null> {
   if (!hasOpenAiConfigured()) {
     return null;
@@ -346,10 +368,10 @@ export async function generateWhatsappCatchAllReply(input: {
     schema: catchAllSchema,
     prompt: `${assistantSystemPreamble(locale)}
 
-You are helping a passenger with their airport transfer.
+You are helping a passenger with their airport transfer on ${replyChannelLabel(input.channel)}.
 Internal workflow state (do not mention literally): ${input.orchestrationState}
 
-${templateContextBlock(input.whatsappTemplateContext)}
+${templateContextBlock(input.whatsappTemplateContext, input.channel)}
 
 ${passengerContextLine(input.passengerName)}
 Booking ref: ${input.bookingRef ?? "unknown"}
@@ -361,7 +383,8 @@ ${input.transcript || "(empty)"}
 Customer message:
 """${input.userMessage.slice(0, 3500)}"""
 
-Write ONE helpful reply in ${assistantLocaleLabel(locale)} (max ~700 characters):
+Write ONE helpful reply in ${assistantLocaleLabel(locale)}:
+${lengthHint(input.channel)}
 - Answer what you safely can from context (pickup/destination/ref) unless template rules say otherwise.
 - If passenger name is on file, you may greet with first name once politely; otherwise do not invent a name.
 - If you cannot answer (policy, changes, billing), say our team will confirm shortly — do not invent facts.`,

@@ -23,7 +23,7 @@ const LIFECYCLE_PHASE_INSTRUCTIONS: Record<
   string
 > = {
   welcome_1:
-    "We just sent the early welcome template: the booking exists, operator/platform/ref and pickup time were in the message. The customer is NOT cancelled. Reply as a helpful pre-trip assistant. You may gently confirm details or answer questions about the upcoming transfer. Do not sound like a generic chatbot repeating the whole itinerary unless they ask.",
+    "We just sent the early welcome message (WhatsApp or SMS): the booking exists, operator/platform/ref and pickup time were in the message. The customer is NOT cancelled. Reply as a helpful pre-trip assistant. You may gently confirm details or answer questions about the upcoming transfer. Do not sound like a generic chatbot repeating the whole itinerary unless they ask.",
   welcome_2:
     "We just sent the <72h reminder welcome template with booking ref and pickup time. Pickup is soon. Be concise and practical. Help with last-minute questions; you may ask for missing trip details only if the scripted flow requires it. Do not discuss cancellation unless they bring it up.",
   data:

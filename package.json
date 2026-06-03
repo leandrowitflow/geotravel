@@ -17,6 +17,7 @@
     "whatsapp:debug-access": "tsx scripts/whatsapp-debug-access.ts",
     "whatsapp:send-probe": "tsx scripts/whatsapp-send-probe.ts",
     "infobip:sms-smoke": "tsx scripts/infobip-sms-smoke.ts",
+    "infobip:sms-lifecycle-smoke": "tsx scripts/infobip-sms-lifecycle-smoke.ts",
     "geotravel:survey-status": "tsx scripts/geotravel-survey-status.ts",
     "case:reextract": "tsx scripts/reextract-case-collected-data.ts",
     "inngest:dev": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",

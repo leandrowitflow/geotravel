@@ -1,6 +1,5 @@
 import { assertNoError } from "@/db/supabase-helpers";
 import type { GeotravelBooking } from "@/lib/geotravel/bookings-api";
-import { buildBookingWhatsappTemplateVariables } from "@/lib/geotravel/build-booking-whatsapp-template-variables";
 import {
   buildBookingWelcomeTemplateBody,
   buildGeotravelWhatsAppConfirmationMessage,
@@ -19,6 +18,18 @@ import {
 } from "@/lib/messaging/send-via-channel";
 import { normalizeGeotravelPhoneToE164 } from "@/lib/phone/normalize-geotravel-e164";
 import { renderWhatsappTemplateCustomerBody } from "@/lib/admin/whatsapp-template-display";
+import {
+  buildLifecycleCustomerBody,
+  formatStoredLifecycleTemplateMessage,
+} from "@/lib/geotravel/build-lifecycle-customer-body";
+import {
+  buildLifecycleSmsBody,
+  resolveLifecycleTemplateVariables,
+} from "@/lib/geotravel/build-lifecycle-sms-body";
+import {
+  type BookingConfirmChannel,
+  effectiveBookingConfirmChannel,
+} from "@/lib/geotravel/resolve-booking-confirm-channel";
 import { advanceCaseForOperationalTemplateSend } from "@/lib/orchestration/advance-case-for-operational-template";
 import {
   assertTransition,
@@ -76,6 +87,8 @@ export type GeotravelWelcomeSendOptions = {
   useLifecycleTemplates?: boolean;
   /** Inngest pilot automation: marks case so cron does not send again (one message per case). */
   fromLifecycleAutomation?: boolean;
+  /** Outbound channel: WhatsApp template API or Infobip SMS with the same lifecycle text. */
+  channelOverride?: BookingConfirmChannel;
 };
 
 export async function executeGeotravelWelcomeSend(
@@ -113,36 +126,79 @@ export async function executeGeotravelWelcomeSend(
     { booking, destinationE164: to },
   );
 
-  const forceSms = envTruthy("GEOTRAVEL_BOOKING_CONFIRM_FORCE_SMS");
-  const preferred: "whatsapp" | "sms" = forceSms
-    ? "sms"
-    : templateName
-      ? "whatsapp"
-      : (ctx.currentChannel as "whatsapp" | "sms");
+  const preferred = effectiveBookingConfirmChannel({
+    channelOverride: options.channelOverride,
+  });
 
   const firstName = await resolveBookingTemplateFirstName(
     serviceSupabase(),
     ctx.reservationPk,
     booking,
   );
-  const useWaTemplate = preferred === "whatsapp" && Boolean(templateName);
-  const templateVariables = useWaTemplate
-    ? buildBookingWhatsappTemplateVariables(booking, templateName, firstName)
+  const useLifecycleContent = Boolean(templateName && lifecyclePhase);
+  const templateVariables = useLifecycleContent
+    ? resolveLifecycleTemplateVariables(booking, templateName, firstName)
     : undefined;
-  const welcomeBody = useWaTemplate
-    ? templateVariables
-      ? `[WhatsApp template: ${templateName}]\n${Object.entries(templateVariables)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join("\n")}`
-      : `[WhatsApp template: ${templateName}]`
+  const customerLifecycleBody = useLifecycleContent
+    ? buildLifecycleCustomerBody({
+        templateName,
+        templateVariables,
+        languageCode: templateLanguageCode,
+      })
+    : null;
+  const smsLifecycleBody =
+    preferred === "sms" && useLifecycleContent
+      ? buildLifecycleSmsBody({
+          templateName,
+          templateVariables,
+          languageCode: templateLanguageCode,
+        })
+      : null;
+  const useWaTemplate = preferred === "whatsapp" && Boolean(templateName);
+  const useSmsLifecycle =
+    preferred === "sms" &&
+    Boolean(templateName) &&
+    Boolean(smsLifecycleBody ?? customerLifecycleBody);
+
+  const welcomeBody = useLifecycleContent
+    ? formatStoredLifecycleTemplateMessage({
+        templateName,
+        templateVariables,
+      })
     : buildBookingWelcomeTemplateBody(firstName);
+
+  if (preferred === "sms" && useLifecycleContent && !smsLifecycleBody) {
+    return {
+      ok: false,
+      status: 502,
+      body: {
+        error: "sms_template_body_missing",
+        hint: `No short SMS body for template "${templateName}" (${templateLanguageCode}). Add it in build-lifecycle-sms-body.ts.`,
+        templateName,
+      },
+    };
+  }
+
+  const outboundSmsText = useSmsLifecycle
+    ? (smsLifecycleBody ?? customerLifecycleBody)!
+    : preferred === "sms"
+      ? longBodyText
+      : undefined;
+
+  const smsFallbackBody =
+    smsLifecycleBody ??
+    (useLifecycleContent && customerLifecycleBody
+      ? customerLifecycleBody
+      : longBodyText);
 
   const send = await sendViaPreferredChannel({
     caseId: ctx.caseId,
     reservationId: ctx.reservationPk,
     preferred,
     toE164: to,
-    body: useWaTemplate ? welcomeBody : longBodyText,
+    body: useWaTemplate || useSmsLifecycle ? welcomeBody : longBodyText,
+    smsBody:
+      outboundSmsText ?? (preferred === "whatsapp" ? smsFallbackBody : undefined),
     templateName: useWaTemplate ? templateName : undefined,
     templateVariables,
     templateLanguageCode,
@@ -241,20 +297,23 @@ export async function executeGeotravelWelcomeSend(
   }
 
   const messageBodyForStore =
-    send.ok && send.channel === "whatsapp" && useWaTemplate
+    send.ok && (useWaTemplate || useSmsLifecycle)
       ? welcomeBody
       : longBodyText;
 
   const sb = serviceSupabase();
 
   const customerDisplayBody =
-    useWaTemplate && templateName
-      ? renderWhatsappTemplateCustomerBody({
-          templateName,
-          variables: templateVariables ?? {},
-          languageCode: templateLanguageCode,
-        })
-      : null;
+    useSmsLifecycle && smsLifecycleBody
+      ? smsLifecycleBody
+      : (useWaTemplate || useSmsLifecycle) && templateName
+        ? (customerLifecycleBody ??
+          renderWhatsappTemplateCustomerBody({
+            templateName,
+            variables: templateVariables ?? {},
+            languageCode: templateLanguageCode,
+          }))
+        : null;
 
   assertNoError(
     "geotravel whatsapp insert message",
@@ -266,7 +325,7 @@ export async function executeGeotravelWelcomeSend(
       provider_message_id: send.providerMessageId,
       status: "sent",
       metadata:
-        useWaTemplate && lifecyclePhase
+        (useWaTemplate || useSmsLifecycle) && lifecyclePhase
           ? {
               lifecycle_phase: lifecyclePhase,
               meta_template_name: templateName,
@@ -364,15 +423,16 @@ export async function executeGeotravelWelcomeSend(
     caseId: ctx.caseId,
     channel: send.channel,
     providerMessageId: send.providerMessageId,
-    templateUsed: useWaTemplate,
-    templateName: useWaTemplate ? templateName : undefined,
+    templateUsed: useWaTemplate || useSmsLifecycle,
+    templateName: useWaTemplate || useSmsLifecycle ? templateName : undefined,
     templatePhase: lifecyclePhase,
     templateSelectionReason: options.templateOverride
       ? `Manual test: ${options.templateOverride}`
       : selection?.reason,
     hoursUntilPickup: selection?.hoursUntilPickup ?? null,
-    templateLanguageSent: useWaTemplate ? templateLanguageCode : undefined,
-    firstNameUsed: useWaTemplate ? firstName : undefined,
+    templateLanguageSent:
+      useWaTemplate || useSmsLifecycle ? templateLanguageCode : undefined,
+    firstNameUsed: useWaTemplate || useSmsLifecycle ? firstName : undefined,
     whatsappFallbackToSms: Boolean(send.whatsappErrorBeforeSmsFallback),
     whatsappAttemptError: send.whatsappErrorBeforeSmsFallback,
     whatsappRecoveryHint:

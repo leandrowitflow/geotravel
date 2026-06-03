@@ -16,6 +16,8 @@ export async function sendViaPreferredChannel(input: {
   preferred: MessagingChannel;
   toE164: string;
   body: string;
+  /** When set, Infobip sends this text (e.g. rendered lifecycle template) instead of `body`. */
+  smsBody?: string;
   templateName?: string;
   templateLanguageCode?: string;
   templateVariables?: Record<string, string>;
@@ -48,10 +50,11 @@ export async function sendViaPreferredChannel(input: {
       reservationId: input.reservationId,
       channel: "sms",
     });
+    const fallbackText = (input.smsBody ?? input.body).trim();
     result = await sendInfobipSms({
       ...base,
       channel: "sms",
-      body: input.body.slice(0, 300),
+      body: fallbackText.slice(0, 1600),
     });
   }
 

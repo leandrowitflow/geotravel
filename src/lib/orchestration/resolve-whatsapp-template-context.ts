@@ -22,9 +22,9 @@ function phaseFromCollectedData(
 }
 
 /**
- * Last lifecycle template context for AI replies — from case collected_data or latest outbound WhatsApp.
+ * Last lifecycle template context for AI replies — from case collected_data or latest outbound WhatsApp/SMS.
  */
-export async function resolveWhatsappTemplateContextForCase(
+export async function resolveMessagingTemplateContextForCase(
   caseId: string,
   collectedData: CollectedDataJson | null | undefined,
   sb: SupabaseClient,
@@ -38,15 +38,15 @@ export async function resolveWhatsappTemplateContextForCase(
   }
 
   const rows = takeRows<{ body: string; metadata: Record<string, unknown> | null }>(
-    "last outbound whatsapp for template context",
+    "last outbound messaging for template context",
     await sb
       .from("messages")
       .select("body,metadata")
       .eq("case_id", caseId)
       .eq("direction", "outbound")
-      .eq("channel", "whatsapp")
+      .in("channel", ["whatsapp", "sms"])
       .order("created_at", { ascending: false })
-      .limit(3),
+      .limit(5),
   );
 
   for (const row of rows) {
@@ -74,6 +74,10 @@ export async function resolveWhatsappTemplateContextForCase(
 
   return null;
 }
+
+/** @deprecated Use resolveMessagingTemplateContextForCase */
+export const resolveWhatsappTemplateContextForCase =
+  resolveMessagingTemplateContextForCase;
 
 export function mergeLastWhatsappLifecyclePhase(
   collected: CollectedDataJson | null | undefined,

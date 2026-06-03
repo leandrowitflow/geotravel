@@ -1,4 +1,10 @@
+import { infobipSmsSender } from "./infobip-config";
 import type { OutboundMessage, SendResult } from "./types";
+
+/** Single-line SMS avoids multipart/newline issues on some PT routes. */
+export function formatSmsOutboundText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
 
 function infobipBaseUrl(): string | null {
   const raw = process.env.INFOBIP_BASE_URL?.trim();
@@ -29,7 +35,7 @@ type InfobipSmsResponse = {
 export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> {
   const baseUrl = infobipBaseUrl();
   const apiKey = process.env.INFOBIP_API_KEY?.trim();
-  const sender = process.env.INFOBIP_SMS_SENDER?.trim();
+  const sender = infobipSmsSender();
   if (!baseUrl || !apiKey || !sender) {
     return { ok: false, error: "infobip_not_configured" };
   }
@@ -44,7 +50,7 @@ export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> 
   const messagePayload: Record<string, unknown> = {
     sender,
     destinations: [{ to }],
-    content: { text: msg.body.slice(0, 1600) },
+    content: { text: formatSmsOutboundText(msg.body).slice(0, 1600) },
   };
   if (notifyUrl) {
     messagePayload.notifyUrl = notifyUrl;
@@ -105,6 +111,10 @@ export async function sendInfobipSms(msg: OutboundMessage): Promise<SendResult> 
       smsProviderMeta: {
         destinationDigits: first.to ?? to,
         status,
+        statusGroup: st?.groupName?.trim(),
+        statusName: st?.name?.trim(),
+        smsCount: (first as { details?: { messageCount?: number } }).details
+          ?.messageCount,
       },
     };
   } catch (e) {

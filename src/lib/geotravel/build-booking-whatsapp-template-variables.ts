@@ -51,11 +51,11 @@ export function buildBookingWhatsappTemplateVariables(
   const name = templateName.trim();
 
   if (name === "booking_confirmation" || name === "booking_confirm") {
-    return { first_name: firstName };
+    return { first_name: firstName, operator: operatorLabel() };
   }
 
   if (name === "satisfaction") {
-    return undefined;
+    return { operator: operatorLabel() };
   }
 
   const operator = operatorLabel();
