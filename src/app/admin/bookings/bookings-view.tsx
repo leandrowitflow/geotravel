@@ -15,6 +15,9 @@ import {
   isBookingDeltaHighlight,
   type GeotravelDeltaHighlights,
 } from "@/lib/geotravel/bookings-sync-cursor";
+import {
+  formatInfobipSmsSenderDisplay,
+} from "@/lib/messaging/infobip-config";
 
 /** Server-side sort keys (current page only; API has no sort param). */
 const SORT_COLUMNS = [
@@ -343,6 +346,7 @@ export async function BookingsView({
   searchParams: BookingsSearchParams;
 }) {
   const sp = await searchParams;
+  const infobipSmsSenderLabel = formatInfobipSmsSenderDisplay();
   const page = Math.max(0, Number(sp.page ?? 0));
   const limit = 500;
   const apiStatus = sp.status?.trim() || undefined;
@@ -826,7 +830,10 @@ export async function BookingsView({
                 </td>
 
                 <td className="px-3 py-2 align-top">
-                  <SendGeotravelWhatsAppButton booking={b} />
+                  <SendGeotravelWhatsAppButton
+                    booking={b}
+                    infobipSmsSenderLabel={infobipSmsSenderLabel}
+                  />
                 </td>
               </tr>
             );

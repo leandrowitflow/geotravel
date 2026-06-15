@@ -23,8 +23,11 @@ type SendChannel = "whatsapp" | "sms";
 
 export function SendGeotravelWhatsAppButton({
   booking,
+  infobipSmsSenderLabel,
 }: {
   booking: GeotravelBooking;
+  /** From INFOBIP_SMS_SENDER on the server (e.g. +447860030523). */
+  infobipSmsSenderLabel?: string | null;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
@@ -159,7 +162,9 @@ export function SendGeotravelWhatsAppButton({
       </p>
       {channelButtons("sms", "SMS")}
       <p className="text-[10px] leading-snug text-stone-500 dark:text-stone-400">
-        SMS uses the same lifecycle text from +351923250271 (Infobip). Set INFOBIP_* in env.
+        {infobipSmsSenderLabel
+          ? `SMS uses the same lifecycle text from ${infobipSmsSenderLabel} (Infobip).`
+          : "SMS uses the same lifecycle text via Infobip. Set INFOBIP_BASE_URL, INFOBIP_API_KEY, and INFOBIP_SMS_SENDER in env."}
       </p>
       {msg && (
         <span

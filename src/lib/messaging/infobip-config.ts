@@ -18,3 +18,13 @@ export function isInfobipSmsConfigured(): boolean {
   const key = process.env.INFOBIP_API_KEY?.trim();
   return Boolean(base && key && infobipSmsSender());
 }
+
+/** E.164-style label for admin UI (e.g. +447860030523). */
+export function formatInfobipSmsSenderDisplay(
+  sender: string | null = infobipSmsSender(),
+): string | null {
+  if (!sender) return null;
+  const digits = sender.replace(/\D/g, "");
+  if (digits.length >= 8) return `+${digits}`;
+  return sender;
+}
